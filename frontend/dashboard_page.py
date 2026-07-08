@@ -1,0 +1,738 @@
+from __future__ import annotations
+
+import base64
+import html
+import time
+import zipfile
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+import streamlit as st
+import streamlit.components.v1 as components
+
+from backend.excel_exporter import export_all_excel_outputs
+from backend.geocoder import apply_geocodes, normalize_review_statuses
+from backend.gis_exporter import export_gis_outputs
+from backend.load_data import DataLoadError, load_sample_datasets, read_spatial_file, read_tabular_file
+from backend.map_generator import create_response_map
+from backend.qa_report import export_qa_reports
+from backend.settlement_matcher import match_records, matching_statistics
+from backend.utils import detect_column_map, output_path, safe_percent
+from backend.validate_data import validate_response_data
+from config import APP_NAME, APP_TAGLINE, ASSETS_DIR, SUPPORTED_SPATIAL_EXTENSIONS
+
+
+OUTPUT_ITEMS = [
+    ("District Data Sheets", "District Workbook", "District-level workbook"),
+    ("District Summary Sheet", "District Summary", "Summary at district level"),
+    ("Cleaned Response Data", "Cleaned Excel", "Excel format"),
+    ("Settlement Shapefile", "Shapefile ZIP", "ESRI Shapefile ZIP"),
+    ("GeoPackage", "GeoPackage", "GIS format .gpkg"),
+    ("QA / Matching Report", "QA PDF Report", "Matched, unmatched, stats"),
+]
+
+
+def _e(value: Any) -> str:
+    return html.escape(str(value if value is not None else ""))
+
+
+def _html(markup: str) -> None:
+    cleaned = "\n".join(line.strip() for line in markup.strip().splitlines())
+    st.markdown(cleaned, unsafe_allow_html=True)
+
+
+def _file_icon() -> str:
+    mark_path = ASSETS_DIR / "ocha_mark.svg"
+    if not mark_path.exists():
+        return ""
+    encoded = base64.b64encode(mark_path.read_bytes()).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded}"
+
+
+def _state_defaults() -> None:
+    defaults = {
+        "response_df": pd.DataFrame(),
+        "gazetteer_df": pd.DataFrame(),
+        "boundary_gdf": None,
+        "validation_report": {},
+        "match_df": pd.DataFrame(),
+        "processed_df": pd.DataFrame(),
+        "generated_outputs": {},
+        "output_errors": [],
+        "processing_seconds": None,
+        "source_files": {},
+        "use_semantic": False,
+        "use_ollama": False,
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def _reset_workflow() -> None:
+    for key in (
+        "response_df",
+        "gazetteer_df",
+        "validation_report",
+        "match_df",
+        "processed_df",
+        "generated_outputs",
+        "output_errors",
+        "processing_seconds",
+        "source_files",
+    ):
+        if key in ("response_df", "gazetteer_df", "match_df", "processed_df"):
+            st.session_state[key] = pd.DataFrame()
+        elif key == "source_files":
+            st.session_state[key] = {}
+        elif key == "output_errors":
+            st.session_state[key] = []
+        else:
+            st.session_state[key] = None if key == "processing_seconds" else {}
+    st.session_state.boundary_gdf = None
+
+
+def _gazetteer_from_upload(uploaded_file) -> pd.DataFrame:
+    suffix = Path(uploaded_file.name).suffix.lower()
+    if suffix in SUPPORTED_SPATIAL_EXTENSIONS:
+        gdf = read_spatial_file(uploaded_file)
+        df = pd.DataFrame(gdf.drop(columns="geometry", errors="ignore"))
+        if "geometry" in gdf and gdf.geometry.notna().any():
+            points = (
+                gdf.geometry.to_crs("EPSG:4326").representative_point()
+                if gdf.crs
+                else gdf.geometry.representative_point()
+            )
+            if "Latitude" not in df.columns:
+                df["Latitude"] = points.y
+            if "Longitude" not in df.columns:
+                df["Longitude"] = points.x
+        return df
+    return read_tabular_file(uploaded_file, add_row_ids=False)
+
+
+def _load_uploaded(response_upload, gazetteer_upload, boundary_upload) -> None:
+    response_df = read_tabular_file(response_upload)
+    gazetteer_df = _gazetteer_from_upload(gazetteer_upload)
+    boundary_gdf = read_spatial_file(boundary_upload) if boundary_upload is not None else None
+
+    st.session_state.response_df = response_df
+    st.session_state.gazetteer_df = gazetteer_df
+    st.session_state.boundary_gdf = boundary_gdf
+    st.session_state.validation_report = validate_response_data(response_df, gazetteer_df, boundary_gdf)
+    st.session_state.match_df = pd.DataFrame()
+    st.session_state.processed_df = pd.DataFrame()
+    st.session_state.generated_outputs = {}
+    st.session_state.output_errors = []
+    st.session_state.source_files = {
+        "response": response_upload.name,
+        "gazetteer": gazetteer_upload.name,
+        "boundaries": boundary_upload.name if boundary_upload is not None else "Not loaded",
+    }
+
+
+def _load_sample() -> None:
+    response_df, gazetteer_df, boundary_gdf = load_sample_datasets()
+    st.session_state.response_df = response_df
+    st.session_state.gazetteer_df = gazetteer_df
+    st.session_state.boundary_gdf = boundary_gdf
+    st.session_state.validation_report = validate_response_data(response_df, gazetteer_df, boundary_gdf)
+    st.session_state.match_df = pd.DataFrame()
+    st.session_state.processed_df = pd.DataFrame()
+    st.session_state.generated_outputs = {}
+    st.session_state.output_errors = []
+    st.session_state.source_files = {
+        "response": "sample_response.csv",
+        "gazetteer": "sample_settlement_gazetteer.csv",
+        "boundaries": "sample_district_boundaries.geojson",
+    }
+
+
+def _has_data() -> bool:
+    response_df = st.session_state.get("response_df")
+    return response_df is not None and not response_df.empty
+
+
+def _ensure_validation() -> dict[str, object]:
+    if not _has_data():
+        return {}
+    if not st.session_state.get("validation_report"):
+        st.session_state.validation_report = validate_response_data(
+            st.session_state.response_df,
+            st.session_state.get("gazetteer_df"),
+            st.session_state.get("boundary_gdf"),
+        )
+    return st.session_state.validation_report
+
+
+def _semantic_available() -> bool:
+    try:
+        import sentence_transformers  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _ollama_available() -> bool:
+    try:
+        import requests
+
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        return response.ok
+    except Exception:
+        return False
+
+
+def _run_matching() -> None:
+    response_df = st.session_state.get("response_df")
+    gazetteer_df = st.session_state.get("gazetteer_df")
+    if response_df is None or response_df.empty or gazetteer_df is None or gazetteer_df.empty:
+        st.warning("Load response data and a settlement gazetteer first.")
+        return
+
+    use_semantic = st.session_state.get("use_semantic", False)
+    use_ollama = st.session_state.get("use_ollama", False)
+
+    if use_semantic and not _semantic_available():
+        st.warning("sentence-transformers is not installed. Continuing with RapidFuzz matching only.")
+        use_semantic = False
+
+    if use_ollama and not _ollama_available():
+        st.warning("Ollama is not reachable at localhost:11434. Reasoning notes were skipped.")
+        use_ollama = False
+
+    started = time.perf_counter()
+    st.session_state.match_df = match_records(
+        response_df, gazetteer_df, use_semantic=use_semantic, use_ollama=use_ollama
+    )
+    st.session_state.processing_seconds = time.perf_counter() - started
+    st.session_state.processed_df = pd.DataFrame()
+
+
+def _apply_geocodes() -> None:
+    response_df = st.session_state.get("response_df")
+    matches_df = st.session_state.get("match_df")
+    if response_df is None or response_df.empty:
+        st.warning("Load response data first.")
+        return
+    matches_df = normalize_review_statuses(matches_df) if matches_df is not None else pd.DataFrame()
+    st.session_state.match_df = matches_df
+    st.session_state.processed_df = apply_geocodes(response_df, matches_df)
+
+
+def _ensure_processed() -> pd.DataFrame:
+    processed_df = st.session_state.get("processed_df")
+    if processed_df is not None and not processed_df.empty:
+        return processed_df
+    response_df = st.session_state.get("response_df")
+    if response_df is None or response_df.empty:
+        return pd.DataFrame()
+    matches_df = st.session_state.get("match_df")
+    if matches_df is None:
+        matches_df = pd.DataFrame()
+    processed_df = apply_geocodes(response_df, matches_df)
+    st.session_state.processed_df = processed_df
+    return processed_df
+
+
+def _write_log(outputs: dict[str, str], elapsed: float) -> str:
+    path = output_path("ocha_processing_log.txt")
+    validation = st.session_state.get("validation_report", {})
+    metrics = validation.get("metrics", {}) if validation else {}
+    lines = [
+        "OCHA Settlement Response Processor - Processing Log",
+        f"Processing time: {elapsed:.2f} seconds",
+        "",
+        "Validation metrics:",
+    ]
+    for key, value in metrics.items():
+        lines.append(f"- {key}: {value}")
+    lines.extend(["", "Generated outputs:"])
+    for label, output in outputs.items():
+        lines.append(f"- {label}: {output}")
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return str(path)
+
+
+def _zip_outputs(outputs: dict[str, str]) -> str | None:
+    existing = [(label, Path(path)) for label, path in outputs.items() if Path(path).exists()]
+    if not existing:
+        return None
+    zip_path = output_path("ocha_all_outputs.zip")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for _, path in existing:
+            archive.write(path, arcname=path.name)
+    return str(zip_path)
+
+
+def _generate_outputs() -> None:
+    processed_df = _ensure_processed()
+    if processed_df.empty:
+        st.warning("Load response data before generating outputs.")
+        return
+
+    validation_report = _ensure_validation()
+    started = time.perf_counter()
+    outputs: dict[str, str] = {}
+    errors: list[str] = []
+
+    try:
+        outputs.update(
+            export_all_excel_outputs(
+                processed_df,
+                st.session_state.get("match_df"),
+                validation_report,
+            )
+        )
+    except Exception as error:
+        errors.append(f"Excel outputs: {error}")
+
+    try:
+        outputs.update(export_gis_outputs(processed_df))
+    except Exception as error:
+        errors.append(f"GIS outputs: {error}")
+
+    try:
+        outputs.update(
+            export_qa_reports(
+                processed_df,
+                st.session_state.get("match_df"),
+                validation_report,
+                st.session_state.get("processing_seconds"),
+            )
+        )
+    except Exception as error:
+        errors.append(f"QA reports: {error}")
+
+    elapsed = time.perf_counter() - started
+    outputs["Log File"] = _write_log(outputs, elapsed)
+    zip_file = _zip_outputs(outputs)
+    if zip_file:
+        outputs["All Outputs ZIP"] = zip_file
+    st.session_state.generated_outputs = outputs
+    st.session_state.output_errors = errors
+
+
+def _metric(metrics: dict[str, Any], key: str, default: int | float = 0) -> Any:
+    return metrics.get(key, default) if metrics else default
+
+
+def _top_header() -> None:
+    mark = _file_icon()
+    mark_html = f'<img src="{mark}" alt="OCHA" />' if mark else '<span>OCHA</span>'
+    _html(
+        f"""
+        <div class="ocha-shell-header">
+            <div class="ocha-brand">
+                <div class="ocha-brand-mark">{mark_html}</div>
+                <div>
+                    <div class="ocha-title">{_e(APP_NAME)}</div>
+                    <div class="ocha-subtitle">Geocode &bull; Summarize &bull; Map &bull; Export</div>
+                </div>
+            </div>
+            <div class="ocha-header-actions">
+                <span class="local-mode">Local Mode <span>(All data stays on this device)</span></span>
+                <span class="about-pill">About</span>
+            </div>
+        </div>
+        """,
+    )
+
+
+def _workflow_stage() -> int:
+    if st.session_state.get("generated_outputs"):
+        return 5
+    processed_df = st.session_state.get("processed_df")
+    if processed_df is not None and not processed_df.empty:
+        return 4
+    match_df = st.session_state.get("match_df")
+    if match_df is not None and not match_df.empty:
+        return 3
+    if st.session_state.get("validation_report"):
+        return 2
+    if _has_data():
+        return 1
+    return 0
+
+
+def _workflow_item(number: int, label: str, stage: int) -> str:
+    state = "done" if stage > number else "active" if stage == number else "waiting"
+    marker = "OK" if state == "done" else str(number)
+    return f'<div class="workflow-item {state}"><span>{marker}</span><strong>{number}. {label}</strong></div>'
+
+
+def _sidebar() -> None:
+    stage = _workflow_stage()
+    response_df = st.session_state.get("response_df", pd.DataFrame())
+    match_df = st.session_state.get("match_df", pd.DataFrame())
+    processed_df = st.session_state.get("processed_df", pd.DataFrame())
+    stats = matching_statistics(match_df)
+    metrics = _ensure_validation().get("metrics", {}) if _has_data() else {}
+
+    with st.sidebar:
+        _html(
+            f"""
+            <div class="workflow-panel">
+                <div class="rail-section-title">Workflow</div>
+                {_workflow_item(1, "Upload Data", stage)}
+                {_workflow_item(2, "Data Validation", stage)}
+                {_workflow_item(3, "Settlement Matching", stage)}
+                {_workflow_item(4, "Review Matches", stage)}
+                {_workflow_item(5, "Generate Outputs", stage)}
+                <div class="rail-divider"></div>
+                <div class="rail-section-title">Reference Data</div>
+                <div class="reference-row"><span>Settlement Layer</span><small>{_e(st.session_state.get("source_files", {}).get("gazetteer", "Not loaded"))}</small></div>
+                <div class="reference-row"><span>District Boundaries</span><small>{_e(st.session_state.get("source_files", {}).get("boundaries", "Not loaded"))}</small></div>
+                <div class="rail-divider"></div>
+                <div class="rail-section-title">Information</div>
+                <div class="info-row"><span>Total Records</span><strong>{len(response_df):,}</strong></div>
+                <div class="info-row"><span>Records with GPS</span><strong>{_metric(metrics, "valid_gps", 0):,}</strong></div>
+                <div class="info-row"><span>Missing GPS</span><strong>{_metric(metrics, "missing_gps", 0):,}</strong></div>
+                <div class="info-row"><span>Matched</span><strong>{stats["matched"]:,}</strong></div>
+                <div class="info-row"><span>Needs Review</span><strong>{stats["needs_review"]:,}</strong></div>
+                <div class="info-row"><span>Processed</span><strong>{len(processed_df):,}</strong></div>
+            </div>
+            """,
+        )
+
+        if st.button("Load Sample Data", use_container_width=True, key="load_sample"):
+            _load_sample()
+            st.rerun()
+
+        with st.expander("Upload files", expanded=not _has_data()):
+            response_upload = st.file_uploader("Response Excel or CSV", type=["xlsx", "xls", "csv"])
+            gazetteer_upload = st.file_uploader(
+                "Settlement Gazetteer",
+                type=["xlsx", "xls", "csv", "geojson", "json", "gpkg", "zip"],
+            )
+            boundary_upload = st.file_uploader("District Boundary Layer", type=["geojson", "json", "gpkg", "zip"])
+            if st.button("Load Uploaded Files", use_container_width=True):
+                if response_upload is None or gazetteer_upload is None:
+                    st.warning("Upload both response data and a gazetteer.")
+                else:
+                    try:
+                        _load_uploaded(response_upload, gazetteer_upload, boundary_upload)
+                        st.rerun()
+                    except DataLoadError as error:
+                        st.error(str(error))
+                    except Exception as error:
+                        st.error(f"Could not load files: {error}")
+
+        if st.button("Run Matching", use_container_width=True, disabled=not _has_data()):
+            _run_matching()
+            st.rerun()
+        if st.button("Apply Geocodes", use_container_width=True, disabled=st.session_state.get("match_df", pd.DataFrame()).empty):
+            _apply_geocodes()
+            st.rerun()
+        if st.button("Generate Outputs", use_container_width=True, disabled=not _has_data()):
+            _generate_outputs()
+            st.rerun()
+        if st.button("Restart Process", use_container_width=True):
+            _reset_workflow()
+            st.rerun()
+
+
+def _uploaded_file_card(title: str, name: str, detail: str, tone: str) -> str:
+    return f"""
+    <div class="uploaded-card">
+        <div class="file-glyph {tone}">{title[:1]}</div>
+        <div>
+            <strong>{_e(title)}</strong>
+            <span>{_e(name)}</span>
+            <small>{_e(detail)}</small>
+        </div>
+    </div>
+    """
+
+
+def _uploaded_files_panel(metrics: dict[str, Any]) -> None:
+    source_files = st.session_state.get("source_files", {})
+    response_rows = len(st.session_state.get("response_df", pd.DataFrame()))
+    gazetteer_rows = len(st.session_state.get("gazetteer_df", pd.DataFrame()))
+    boundary_rows = _metric(metrics, "boundary_features", 0)
+    _html(
+        f"""
+        <div class="panel-card">
+            <div class="section-title">Uploaded Files</div>
+            <div class="uploaded-grid">
+                {_uploaded_file_card("Response Data", source_files.get("response", "Awaiting file"), f"{response_rows:,} rows", "green")}
+                {_uploaded_file_card("Settlement / Village Layer", source_files.get("gazetteer", "Awaiting file"), f"{gazetteer_rows:,} settlements", "blue")}
+                {_uploaded_file_card("District Boundaries", source_files.get("boundaries", "Optional"), f"{boundary_rows:,} districts", "navy")}
+            </div>
+        </div>
+        """,
+    )
+
+
+def _process_panel() -> None:
+    stage = _workflow_stage()
+    steps = [("Upload", 1), ("Validate", 2), ("Match", 3), ("Review", 4), ("Outputs", 5)]
+    step_html = []
+    for label, number in steps:
+        state = "done" if stage > number else "active" if stage == number else "waiting"
+        marker = "OK" if state == "done" else str(number)
+        step_html.append(
+            f'<div class="process-step {state}"><span>{marker}</span><strong>{_e(label)}</strong></div>'
+        )
+    _html(
+        f"""
+        <div class="panel-card process-card">
+            <div class="section-title">Process Overview</div>
+            <div class="process-line">{"".join(step_html)}</div>
+        </div>
+        """,
+    )
+
+
+def _summary_card(label: str, value: str, detail: str, tone: str) -> str:
+    return f"""
+    <div class="summary-card {tone}">
+        <div>
+            <span>{_e(label)}</span>
+            <strong>{_e(value)}</strong>
+            <small>{_e(detail)}</small>
+        </div>
+        <em>{_e(label[:1])}</em>
+    </div>
+    """
+
+
+def _validation_summary(metrics: dict[str, Any]) -> None:
+    total = int(_metric(metrics, "total_records", 0))
+    valid = int(_metric(metrics, "valid_gps", 0))
+    missing = int(_metric(metrics, "missing_gps", 0))
+    duplicates = int(_metric(metrics, "duplicate_records", 0))
+    invalid = int(_metric(metrics, "invalid_coordinates", 0))
+    missing_names = int(_metric(metrics, "missing_settlements", 0))
+    _html(
+        f"""
+        <div class="section-title">Data Validation Summary</div>
+        <div class="summary-grid">
+            {_summary_card("Total Records", f"{total:,}", "Loaded response rows", "blue")}
+            {_summary_card("With Coordinates", f"{valid:,}", f"{safe_percent(valid, total)}%", "green")}
+            {_summary_card("Missing Coordinates", f"{missing:,}", f"{safe_percent(missing, total)}%", "orange")}
+            {_summary_card("Duplicates", f"{duplicates:,}", f"{safe_percent(duplicates, total)}%", "purple")}
+            {_summary_card("Invalid Coordinates", f"{invalid:,}", f"{safe_percent(invalid, total)}%", "red")}
+            {_summary_card("Missing Settlement Name", f"{missing_names:,}", f"{safe_percent(missing_names, total)}%", "slate")}
+        </div>
+        """,
+    )
+
+
+def _status_class(status: str) -> str:
+    status = status.lower()
+    if status in {"auto_accepted", "accepted", "manual_accepted"}:
+        return "accept"
+    if status == "needs_review":
+        return "review"
+    return "reject"
+
+
+def _matching_table(matches_df: pd.DataFrame) -> str:
+    if matches_df is None or matches_df.empty:
+        return '<div class="empty-panel">Run matching to populate settlement suggestions.</div>'
+
+    rows = []
+    for _, row in matches_df.head(8).iterrows():
+        status = str(row.get("status", "unresolved"))
+        confidence = row.get("confidence", 0)
+        rows.append(
+            f"""
+            <tr>
+                <td>{_e(row.get("submitted_settlement", ""))}</td>
+                <td>{_e(row.get("submitted_district", ""))}</td>
+                <td>{_e(row.get("suggested_settlement", ""))}</td>
+                <td><span class="confidence {_status_class(status)}">{_e(confidence)}%</span></td>
+                <td>{_e(row.get("latitude", ""))}</td>
+                <td>{_e(row.get("longitude", ""))}</td>
+                <td><span class="action-pill {_status_class(status)}">{'Accept' if _status_class(status) == 'accept' else 'Review'}</span></td>
+            </tr>
+            """
+        )
+    return f"""
+    <div class="match-table-wrap">
+        <table class="match-table">
+            <thead>
+                <tr>
+                    <th>Submitted Settlement</th>
+                    <th>Submitted District</th>
+                    <th>Suggested Match</th>
+                    <th>Confidence</th>
+                    <th>Lat</th>
+                    <th>Lon</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>{''.join(rows)}</tbody>
+        </table>
+    </div>
+    """
+
+
+def _matching_panel() -> None:
+    matches_df = st.session_state.get("match_df", pd.DataFrame())
+    stats = matching_statistics(matches_df)
+    ai_enabled = st.session_state.get("use_semantic", False) or st.session_state.get("use_ollama", False)
+    ai_label = " <span>(AI Enabled)</span>" if ai_enabled else ""
+    _html(
+        f"""
+        <div class="panel-card panel-fill">
+            <div class="section-title">Settlement Matching{ai_label}</div>
+            {_matching_table(matches_df)}
+            <div class="match-legend">
+                <span><i class="dot green"></i> Auto Matched ({stats["auto_accepted"]:,})</span>
+                <span><i class="dot orange"></i> Needs Review ({stats["needs_review"]:,})</span>
+                <span><i class="dot red"></i> Unmatched ({stats["unresolved"]:,})</span>
+                <span><i class="dot gray"></i> Manually Edited</span>
+            </div>
+        </div>
+        """,
+    )
+
+    st.checkbox("Enable semantic matching with Sentence Transformers", key="use_semantic")
+    st.caption("Improves settlement matching using local text embeddings. May be slower on first run.")
+    if st.session_state.get("use_semantic"):
+        st.info("Semantic matching enabled.")
+
+    st.checkbox("Enable Ollama reasoning notes", key="use_ollama")
+    st.caption("Adds short local AI reasoning notes for low-confidence matches. Requires Ollama running locally.")
+    if st.session_state.get("use_ollama"):
+        st.info("Ollama reasoning enabled. Make sure Ollama is running with qwen2.5.")
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        if st.button("Run Settlement Matching", use_container_width=True, disabled=not _has_data()):
+            _run_matching()
+            st.rerun()
+    with c2:
+        if st.button("Save Reviewed Matches", type="primary", use_container_width=True, disabled=matches_df.empty):
+            st.session_state.match_df = normalize_review_statuses(matches_df)
+            _apply_geocodes()
+            st.rerun()
+
+
+def _map_panel() -> None:
+    processed_df = _ensure_processed()
+    if processed_df.empty:
+        _html(
+            """
+            <div class="panel-card panel-fill">
+                <div class="section-title">Settlements Preview Map</div>
+                <div class="empty-map">Load data to preview mapped settlements.</div>
+            </div>
+            """,
+        )
+        return
+
+    _html('<div class="section-title outside-title">Settlements Preview Map</div>')
+    try:
+        response_map = create_response_map(
+            processed_df,
+            st.session_state.get("boundary_gdf"),
+            st.session_state.get("match_df"),
+        )
+        try:
+            from streamlit_folium import st_folium
+
+            st_folium(response_map, use_container_width=True, height=430)
+        except ImportError:
+            components.html(response_map._repr_html_(), height=440)
+    except Exception as error:
+        st.warning(f"Map preview is unavailable: {error}")
+
+
+def _output_row(title: str, output_key: str, detail: str, outputs: dict[str, str]) -> str:
+    available = output_key in outputs and Path(outputs[output_key]).exists()
+    state = "ready" if available else "pending"
+    return f"""
+    <div class="output-card {state}">
+        <div class="output-icon">{_e(title[:1])}</div>
+        <div>
+            <strong>{_e(title)}</strong>
+            <span>{_e(detail)}</span>
+        </div>
+        <em>{'Ready' if available else 'Pending'}</em>
+    </div>
+    """
+
+
+def _outputs_panel() -> None:
+    outputs = st.session_state.get("generated_outputs", {})
+    errors = st.session_state.get("output_errors", [])
+    rows = [_output_row(title, key, detail, outputs) for title, key, detail in OUTPUT_ITEMS]
+    _html(
+        f"""
+        <div class="panel-card panel-fill">
+            <div class="section-title">Outputs Preview</div>
+            <div class="output-list">{''.join(rows)}</div>
+        </div>
+        """,
+    )
+    for error in errors:
+        st.error(error)
+
+    if st.button("Generate All Outputs", use_container_width=True, type="primary", disabled=not _has_data()):
+        _generate_outputs()
+        st.rerun()
+
+    zip_path = outputs.get("All Outputs ZIP")
+    if zip_path and Path(zip_path).exists():
+        st.download_button(
+            "Download All Outputs",
+            data=Path(zip_path).read_bytes(),
+            file_name=Path(zip_path).name,
+            mime="application/zip",
+            use_container_width=True,
+        )
+
+    with st.expander("Individual files", expanded=False):
+        for label, path in outputs.items():
+            file_path = Path(path)
+            if not file_path.exists() or label == "All Outputs ZIP":
+                continue
+            st.download_button(
+                f"Download {label}",
+                data=file_path.read_bytes(),
+                file_name=file_path.name,
+                mime="application/octet-stream",
+                use_container_width=True,
+                key=f"download_{label}_{file_path.name}",
+            )
+
+
+def _local_notice() -> None:
+    _html(
+        """
+        <div class="local-notice">
+            <strong>Local processing:</strong> all data stays on this device.
+        </div>
+        """,
+    )
+
+
+def render() -> None:
+    _state_defaults()
+    _top_header()
+    _sidebar()
+
+    validation_report = _ensure_validation() if _has_data() else {}
+    metrics = validation_report.get("metrics", {}) if validation_report else {}
+
+    top_left, top_right = st.columns([1.65, 1], gap="small")
+    with top_left:
+        _uploaded_files_panel(metrics)
+    with top_right:
+        _process_panel()
+
+    _validation_summary(metrics)
+
+    match_col, map_col, output_col = st.columns([1.55, 1, 0.95], gap="small")
+    with match_col:
+        _matching_panel()
+    with map_col:
+        _map_panel()
+    with output_col:
+        _outputs_panel()
+
+    _local_notice()
