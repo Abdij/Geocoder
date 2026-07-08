@@ -25,7 +25,9 @@ def reviewed_match_mask(matches_df: pd.DataFrame) -> pd.Series:
     )
 
 
-def normalize_review_statuses(matches_df: pd.DataFrame) -> pd.DataFrame:
+def normalize_review_statuses(matches_df: pd.DataFrame | None) -> pd.DataFrame:
+    if matches_df is None:
+        return pd.DataFrame()
     matches_df = matches_df.copy()
     if matches_df.empty:
         return matches_df
@@ -38,7 +40,7 @@ def normalize_review_statuses(matches_df: pd.DataFrame) -> pd.DataFrame:
     return matches_df
 
 
-def apply_geocodes(response_df: pd.DataFrame, matches_df: pd.DataFrame) -> pd.DataFrame:
+def apply_geocodes(response_df: pd.DataFrame, matches_df: pd.DataFrame | None) -> pd.DataFrame:
     df = response_df.copy()
     matches_df = normalize_review_statuses(matches_df)
     columns = detect_column_map(df)

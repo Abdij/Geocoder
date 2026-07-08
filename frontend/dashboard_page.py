@@ -16,7 +16,7 @@ from backend.geocoder import apply_geocodes, normalize_review_statuses
 from backend.gis_exporter import export_gis_outputs
 from backend.load_data import DataLoadError, load_sample_datasets, read_spatial_file, read_tabular_file
 from backend.map_generator import create_response_map
-from backend.qa_report import export_qa_reports
+from backend.qa_report import export_qa_excel_report, export_qa_pdf_report
 from backend.settlement_matcher import match_records, matching_statistics
 from backend.utils import detect_column_map, output_path, safe_percent
 from backend.validate_data import validate_response_data
@@ -29,8 +29,14 @@ OUTPUT_ITEMS = [
     ("Cleaned Response Data", "Cleaned Excel", "Excel format"),
     ("Settlement Shapefile", "Shapefile ZIP", "ESRI Shapefile ZIP"),
     ("GeoPackage", "GeoPackage", "GIS format .gpkg"),
+    ("GeoJSON", "GeoJSON", "Web GIS format"),
+    ("QA Excel Report", "QA Excel Report", "Detailed QA workbook"),
     ("QA / Matching Report", "QA PDF Report", "Matched, unmatched, stats"),
 ]
+OUTPUT_TITLES = [title for title, _, _ in OUTPUT_ITEMS]
+OUTPUT_KEY_BY_TITLE = {title: key for title, key, _ in OUTPUT_ITEMS}
+EXCEL_OUTPUT_KEYS = {"Cleaned Excel", "District Workbook", "District Summary"}
+GIS_OUTPUT_KEYS = {"Shapefile ZIP", "GeoPackage", "GeoJSON"}
 
 
 def _e(value: Any) -> str:
@@ -60,15 +66,62 @@ def _state_defaults() -> None:
         "processed_df": pd.DataFrame(),
         "generated_outputs": {},
         "output_errors": [],
+        "output_stage_timings": [],
         "processing_seconds": None,
         "source_files": {},
         "use_semantic": False,
         "use_ollama": False,
         "matching_warnings": [],
+        "selected_output_titles": OUTPUT_TITLES.copy(),
+        "download_cache": {},
+        "map_cache": {},
+        "data_revision": 0,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+
+def _clear_generated_outputs() -> None:
+    st.session_state.generated_outputs = {}
+    st.session_state.output_errors = []
+    st.session_state.output_stage_timings = []
+    st.session_state.download_cache = {}
+
+
+def _bump_data_revision() -> None:
+    st.session_state.data_revision = int(st.session_state.get("data_revision", 0)) + 1
+    st.session_state.map_cache = {}
+    st.session_state.download_cache = {}
+
+
+def _selected_output_keys() -> set[str]:
+    selected_titles = st.session_state.get("selected_output_titles") or OUTPUT_TITLES
+    return {
+        OUTPUT_KEY_BY_TITLE[title]
+        for title in selected_titles
+        if title in OUTPUT_KEY_BY_TITLE
+    }
+
+
+def _download_bytes(file_path: Path) -> bytes:
+    stat = file_path.stat()
+    cache_key = str(file_path)
+    cache = st.session_state.setdefault("download_cache", {})
+    cached = cache.get(cache_key)
+    if (
+        cached
+        and cached.get("mtime_ns") == stat.st_mtime_ns
+        and cached.get("size") == stat.st_size
+    ):
+        return cached["data"]
+    data = file_path.read_bytes()
+    cache[cache_key] = {
+        "mtime_ns": stat.st_mtime_ns,
+        "size": stat.st_size,
+        "data": data,
+    }
+    return data
 
 
 def _reset_workflow() -> None:
@@ -80,19 +133,23 @@ def _reset_workflow() -> None:
         "processed_df",
         "generated_outputs",
         "output_errors",
+        "output_stage_timings",
         "processing_seconds",
         "source_files",
         "matching_warnings",
+        "download_cache",
+        "map_cache",
     ):
         if key in ("response_df", "gazetteer_df", "match_df", "processed_df"):
             st.session_state[key] = pd.DataFrame()
         elif key == "source_files":
             st.session_state[key] = {}
-        elif key in ("output_errors", "matching_warnings"):
+        elif key in ("output_errors", "matching_warnings", "output_stage_timings"):
             st.session_state[key] = []
         else:
             st.session_state[key] = None if key == "processing_seconds" else {}
     st.session_state.boundary_gdf = None
+    _bump_data_revision()
 
 
 def _gazetteer_from_upload(uploaded_file) -> pd.DataFrame:
@@ -125,8 +182,8 @@ def _load_uploaded(response_upload, gazetteer_upload, boundary_upload) -> None:
     st.session_state.validation_report = validate_response_data(response_df, gazetteer_df, boundary_gdf)
     st.session_state.match_df = pd.DataFrame()
     st.session_state.processed_df = pd.DataFrame()
-    st.session_state.generated_outputs = {}
-    st.session_state.output_errors = []
+    _clear_generated_outputs()
+    _bump_data_revision()
     st.session_state.source_files = {
         "response": response_upload.name,
         "gazetteer": gazetteer_upload.name,
@@ -142,8 +199,8 @@ def _load_sample() -> None:
     st.session_state.validation_report = validate_response_data(response_df, gazetteer_df, boundary_gdf)
     st.session_state.match_df = pd.DataFrame()
     st.session_state.processed_df = pd.DataFrame()
-    st.session_state.generated_outputs = {}
-    st.session_state.output_errors = []
+    _clear_generated_outputs()
+    _bump_data_revision()
     st.session_state.source_files = {
         "response": "sample_response.csv",
         "gazetteer": "sample_settlement_gazetteer.csv",
@@ -213,6 +270,8 @@ def _run_matching() -> None:
     st.session_state.processing_seconds = time.perf_counter() - started
     st.session_state.processed_df = pd.DataFrame()
     st.session_state.matching_warnings = warnings
+    _clear_generated_outputs()
+    _bump_data_revision()
 
 
 def _apply_geocodes() -> None:
@@ -224,6 +283,8 @@ def _apply_geocodes() -> None:
     matches_df = normalize_review_statuses(matches_df) if matches_df is not None else pd.DataFrame()
     st.session_state.match_df = matches_df
     st.session_state.processed_df = apply_geocodes(response_df, matches_df)
+    _clear_generated_outputs()
+    _bump_data_revision()
 
 
 def _ensure_processed() -> pd.DataFrame:
@@ -241,7 +302,7 @@ def _ensure_processed() -> pd.DataFrame:
     return processed_df
 
 
-def _write_log(outputs: dict[str, str], elapsed: float) -> str:
+def _write_log(outputs: dict[str, str], elapsed: float, stage_timings: list[tuple[str, float]] | None = None) -> str:
     path = output_path("ocha_processing_log.txt")
     validation = st.session_state.get("validation_report", {})
     metrics = validation.get("metrics", {}) if validation else {}
@@ -253,6 +314,10 @@ def _write_log(outputs: dict[str, str], elapsed: float) -> str:
     ]
     for key, value in metrics.items():
         lines.append(f"- {key}: {value}")
+    if stage_timings:
+        lines.extend(["", "Stage timings:"])
+        for label, seconds in stage_timings:
+            lines.append(f"- {label}: {seconds:.2f} seconds")
     lines.extend(["", "Generated outputs:"])
     for label, output in outputs.items():
         lines.append(f"- {label}: {output}")
@@ -277,46 +342,76 @@ def _generate_outputs() -> None:
         st.warning("Load response data before generating outputs.")
         return
 
+    selected_keys = _selected_output_keys()
+    if not selected_keys:
+        st.warning("Select at least one output to generate.")
+        return
+
     validation_report = _ensure_validation()
     started = time.perf_counter()
     outputs: dict[str, str] = {}
     errors: list[str] = []
+    stage_timings: list[tuple[str, float]] = []
 
-    try:
-        outputs.update(
-            export_all_excel_outputs(
+    _clear_generated_outputs()
+
+    def run_stage(label: str, action) -> None:
+        stage_started = time.perf_counter()
+        try:
+            outputs.update(action())
+        except Exception as error:
+            errors.append(f"{label}: {error}")
+        finally:
+            stage_timings.append((label, time.perf_counter() - stage_started))
+
+    excel_keys = selected_keys & EXCEL_OUTPUT_KEYS
+    if excel_keys:
+        run_stage(
+            "Excel outputs",
+            lambda: export_all_excel_outputs(
                 processed_df,
                 st.session_state.get("match_df"),
                 validation_report,
-            )
+                output_keys=excel_keys,
+            ),
         )
-    except Exception as error:
-        errors.append(f"Excel outputs: {error}")
 
-    try:
-        outputs.update(export_gis_outputs(processed_df))
-    except Exception as error:
-        errors.append(f"GIS outputs: {error}")
+    gis_keys = selected_keys & GIS_OUTPUT_KEYS
+    if gis_keys:
+        run_stage("GIS outputs", lambda: export_gis_outputs(processed_df, output_keys=gis_keys))
 
-    try:
-        outputs.update(
-            export_qa_reports(
-                processed_df,
-                st.session_state.get("match_df"),
-                validation_report,
-                st.session_state.get("processing_seconds"),
-            )
+    if "QA Excel Report" in selected_keys:
+        run_stage(
+            "QA Excel Report",
+            lambda: {
+                "QA Excel Report": str(
+                    export_qa_excel_report(processed_df, st.session_state.get("match_df"), validation_report)
+                )
+            },
         )
-    except Exception as error:
-        errors.append(f"QA reports: {error}")
+    if "QA PDF Report" in selected_keys:
+        run_stage(
+            "QA PDF Report",
+            lambda: {
+                "QA PDF Report": str(
+                    export_qa_pdf_report(
+                        processed_df,
+                        st.session_state.get("match_df"),
+                        validation_report,
+                        st.session_state.get("processing_seconds"),
+                    )
+                )
+            },
+        )
 
     elapsed = time.perf_counter() - started
-    outputs["Log File"] = _write_log(outputs, elapsed)
+    outputs["Log File"] = _write_log(outputs, elapsed, stage_timings)
     zip_file = _zip_outputs(outputs)
     if zip_file:
         outputs["All Outputs ZIP"] = zip_file
     st.session_state.generated_outputs = outputs
     st.session_state.output_errors = errors
+    st.session_state.output_stage_timings = stage_timings
 
 
 def _metric(metrics: dict[str, Any], key: str, default: int | float = 0) -> Any:
@@ -620,6 +715,28 @@ def _matching_panel() -> None:
             st.rerun()
 
 
+def _response_map_html(processed_df: pd.DataFrame) -> str:
+    boundary_gdf = st.session_state.get("boundary_gdf")
+    matches_df = st.session_state.get("match_df")
+    boundary_count = int(len(boundary_gdf)) if boundary_gdf is not None else 0
+    match_count = len(matches_df) if matches_df is not None else 0
+    cache_key = (
+        st.session_state.get("data_revision", 0),
+        len(processed_df),
+        len(processed_df.columns),
+        boundary_count,
+        match_count,
+    )
+    cache = st.session_state.setdefault("map_cache", {})
+    if cache.get("key") == cache_key:
+        return cache["html"]
+
+    response_map = create_response_map(processed_df, boundary_gdf, matches_df)
+    html_output = response_map._repr_html_()
+    st.session_state.map_cache = {"key": cache_key, "html": html_output}
+    return html_output
+
+
 def _map_panel() -> None:
     processed_df = _ensure_processed()
     if processed_df.empty:
@@ -635,17 +752,7 @@ def _map_panel() -> None:
 
     _html('<div class="section-title outside-title">Settlements Preview Map</div>')
     try:
-        response_map = create_response_map(
-            processed_df,
-            st.session_state.get("boundary_gdf"),
-            st.session_state.get("match_df"),
-        )
-        try:
-            from streamlit_folium import st_folium
-
-            st_folium(response_map, use_container_width=True, height=430)
-        except ImportError:
-            components.html(response_map._repr_html_(), height=440)
+        components.html(_response_map_html(processed_df), height=440)
     except Exception as error:
         st.warning(f"Map preview is unavailable: {error}")
 
@@ -680,16 +787,29 @@ def _outputs_panel() -> None:
     for error in errors:
         st.error(error)
 
-    if st.button("Generate All Outputs", use_container_width=True, type="primary", disabled=not _has_data()):
+    st.multiselect(
+        "Outputs to generate",
+        options=OUTPUT_TITLES,
+        key="selected_output_titles",
+        disabled=not _has_data(),
+    )
+    selected_count = len(_selected_output_keys())
+    button_label = "Generate All Outputs" if selected_count == len(OUTPUT_ITEMS) else "Generate Selected Outputs"
+    if st.button(button_label, use_container_width=True, type="primary", disabled=not _has_data()):
         _generate_outputs()
         st.rerun()
 
+    stage_timings = st.session_state.get("output_stage_timings", [])
+    if stage_timings:
+        st.caption(" | ".join(f"{label}: {seconds:.2f}s" for label, seconds in stage_timings))
+
     zip_path = outputs.get("All Outputs ZIP")
     if zip_path and Path(zip_path).exists():
+        file_path = Path(zip_path)
         st.download_button(
             "Download All Outputs",
-            data=Path(zip_path).read_bytes(),
-            file_name=Path(zip_path).name,
+            data=_download_bytes(file_path),
+            file_name=file_path.name,
             mime="application/zip",
             use_container_width=True,
         )
@@ -701,7 +821,7 @@ def _outputs_panel() -> None:
                 continue
             st.download_button(
                 f"Download {label}",
-                data=file_path.read_bytes(),
+                data=_download_bytes(file_path),
                 file_name=file_path.name,
                 mime="application/octet-stream",
                 use_container_width=True,

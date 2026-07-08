@@ -524,7 +524,7 @@ def matching_statistics(matches_df: pd.DataFrame) -> dict[str, int | float]:
     status = matches_df["status"].fillna("")
     return {
         "matched": int(status.isin(["auto_accepted", "accepted", "needs_review"]).sum()),
-        "auto_accepted": int((status == "auto_accepted").sum()),
+        "auto_accepted": int(status.isin(["auto_accepted", "accepted"]).sum()),
         "needs_review": int((status == "needs_review").sum()),
         "unresolved": int((status == "unresolved").sum()),
         "average_confidence": round(float(matches_df["confidence"].fillna(0).mean()), 1),

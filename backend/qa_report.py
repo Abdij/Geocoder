@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Iterable
 
 import pandas as pd
 
 from backend.district_summary import build_summary_tables
 from backend.utils import output_path
+
+
+QA_OUTPUT_KEYS = {"QA Excel Report", "QA PDF Report"}
+
+
+def _selected_keys(output_keys: Iterable[str] | None) -> set[str]:
+    return set(output_keys) if output_keys is not None else set(QA_OUTPUT_KEYS)
 
 
 def export_qa_excel_report(
@@ -18,24 +26,28 @@ def export_qa_excel_report(
     issues = validation_report.get("issues", []) if validation_report else []
     summary_tables = build_summary_tables(processed_df)
 
-    with pd.ExcelWriter(path, engine="openpyxl") as writer:
-        pd.DataFrame(
-            [{"Metric": key.replace("_", " ").title(), "Value": value} for key, value in metrics.items()]
-        ).to_excel(writer, sheet_name="Readiness Metrics", index=False)
-        pd.DataFrame(issues).to_excel(writer, sheet_name="QA Issues", index=False)
+    from backend.excel_exporter import _excel_writer, _is_xlsxwriter, _style_workbook, _write_dataframe
+
+    with _excel_writer(path) as writer:
+        _write_dataframe(
+            writer,
+            pd.DataFrame(
+                [{"Metric": key.replace("_", " ").title(), "Value": value} for key, value in metrics.items()]
+            ),
+            "Readiness Metrics",
+        )
+        _write_dataframe(writer, pd.DataFrame(issues), "QA Issues")
         if matches_df is not None and not matches_df.empty:
-            matches_df.to_excel(writer, sheet_name="Settlement Matches", index=False)
-            matches_df[matches_df["status"].isin(["needs_review", "unresolved"])].to_excel(
+            _write_dataframe(writer, matches_df, "Settlement Matches")
+            _write_dataframe(
                 writer,
-                sheet_name="Low Confidence",
-                index=False,
+                matches_df[matches_df["status"].isin(["needs_review", "unresolved"])],
+                "Low Confidence",
             )
-        summary_tables["district_summary"].to_excel(writer, sheet_name="District Summary", index=False)
-        summary_tables["cluster_summary"].to_excel(writer, sheet_name="Cluster Summary", index=False)
-
-    from backend.excel_exporter import _style_workbook
-
-    _style_workbook(path)
+        _write_dataframe(writer, summary_tables["district_summary"], "District Summary")
+        _write_dataframe(writer, summary_tables["cluster_summary"], "Cluster Summary")
+        if not _is_xlsxwriter(writer):
+            _style_workbook(writer.book)
     return path
 
 
@@ -144,10 +156,14 @@ def export_qa_reports(
     matches_df: pd.DataFrame | None,
     validation_report: dict[str, object] | None,
     processing_seconds: float | None = None,
+    output_keys: Iterable[str] | None = None,
 ) -> dict[str, str]:
-    excel_path = export_qa_excel_report(processed_df, matches_df, validation_report)
-    pdf_path = export_qa_pdf_report(processed_df, matches_df, validation_report, processing_seconds)
-    return {
-        "QA Excel Report": str(excel_path),
-        "QA PDF Report": str(pdf_path),
-    }
+    selected = _selected_keys(output_keys)
+    outputs: dict[str, str] = {}
+    if "QA Excel Report" in selected:
+        outputs["QA Excel Report"] = str(export_qa_excel_report(processed_df, matches_df, validation_report))
+    if "QA PDF Report" in selected:
+        outputs["QA PDF Report"] = str(
+            export_qa_pdf_report(processed_df, matches_df, validation_report, processing_seconds)
+        )
+    return outputs
