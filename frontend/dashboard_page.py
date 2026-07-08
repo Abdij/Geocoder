@@ -64,6 +64,7 @@ def _state_defaults() -> None:
         "source_files": {},
         "use_semantic": False,
         "use_ollama": False,
+        "matching_warnings": [],
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -81,12 +82,13 @@ def _reset_workflow() -> None:
         "output_errors",
         "processing_seconds",
         "source_files",
+        "matching_warnings",
     ):
         if key in ("response_df", "gazetteer_df", "match_df", "processed_df"):
             st.session_state[key] = pd.DataFrame()
         elif key == "source_files":
             st.session_state[key] = {}
-        elif key == "output_errors":
+        elif key in ("output_errors", "matching_warnings"):
             st.session_state[key] = []
         else:
             st.session_state[key] = None if key == "processing_seconds" else {}
@@ -185,21 +187,23 @@ def _ollama_available() -> bool:
 
 
 def _run_matching() -> None:
+    warnings: list[str] = []
     response_df = st.session_state.get("response_df")
     gazetteer_df = st.session_state.get("gazetteer_df")
     if response_df is None or response_df.empty or gazetteer_df is None or gazetteer_df.empty:
-        st.warning("Load response data and a settlement gazetteer first.")
+        warnings.append("Load response data and a settlement gazetteer first.")
+        st.session_state.matching_warnings = warnings
         return
 
     use_semantic = st.session_state.get("use_semantic", False)
     use_ollama = st.session_state.get("use_ollama", False)
 
     if use_semantic and not _semantic_available():
-        st.warning("sentence-transformers is not installed. Continuing with RapidFuzz matching only.")
+        warnings.append("sentence-transformers is not installed. Continuing with RapidFuzz matching only.")
         use_semantic = False
 
     if use_ollama and not _ollama_available():
-        st.warning("Ollama is not reachable at localhost:11434. Reasoning notes were skipped.")
+        warnings.append("Ollama is not reachable at localhost:11434. Reasoning notes were skipped.")
         use_ollama = False
 
     started = time.perf_counter()
@@ -208,6 +212,7 @@ def _run_matching() -> None:
     )
     st.session_state.processing_seconds = time.perf_counter() - started
     st.session_state.processed_df = pd.DataFrame()
+    st.session_state.matching_warnings = warnings
 
 
 def _apply_geocodes() -> None:
@@ -599,6 +604,9 @@ def _matching_panel() -> None:
     st.caption("Adds short local AI reasoning notes for low-confidence matches. Requires Ollama running locally.")
     if st.session_state.get("use_ollama"):
         st.info("Ollama reasoning enabled. Make sure Ollama is running with qwen2.5.")
+
+    for warning_message in st.session_state.get("matching_warnings", []):
+        st.warning(warning_message)
 
     c1, c2 = st.columns([1, 1])
     with c1:
