@@ -581,6 +581,22 @@ a.about-pill:focus-visible {
     background: #98a2b3;
 }
 
+.map-legend {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.9rem;
+    margin: 0.4rem 0 0.75rem 0;
+}
+
+.map-legend span {
+    align-items: center;
+    color: #344054;
+    display: inline-flex;
+    font-size: 0.76rem;
+    gap: 0.34rem;
+}
+
 .ai-readiness {
     display: grid;
     gap: 0.55rem;

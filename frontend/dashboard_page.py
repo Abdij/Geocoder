@@ -21,7 +21,7 @@ from backend.qa_report import export_qa_excel_report, export_qa_pdf_report
 from backend.settlement_matcher import match_records, matching_statistics
 from backend.utils import detect_column_map, output_path, safe_percent
 from backend.validate_data import validate_response_data
-from config import APP_NAME, APP_TAGLINE, ASSETS_DIR, STATIC_DIR, SUPPORTED_SPATIAL_EXTENSIONS
+from config import APP_NAME, APP_TAGLINE, ASSETS_DIR, STATIC_DIR, STATUS_COLORS, SUPPORTED_SPATIAL_EXTENSIONS
 
 
 OUTPUT_ITEMS = [
@@ -756,6 +756,69 @@ def _matching_table(matches_df: pd.DataFrame) -> str:
     """
 
 
+def _merge_reviewed_matches(matches_df: pd.DataFrame, edited_subset: pd.DataFrame) -> pd.DataFrame:
+    if edited_subset.empty:
+        return matches_df
+    merged = matches_df.set_index("record_id")
+    edits = edited_subset.set_index("record_id")
+    for column in edits.columns:
+        merged.loc[edits.index, column] = edits[column]
+    return merged.reset_index()
+
+
+def _review_queue_editor(matches_df: pd.DataFrame) -> pd.DataFrame:
+    if matches_df.empty:
+        return matches_df
+    status_lower = matches_df["status"].astype(str).str.lower()
+    review_subset = matches_df.loc[status_lower.isin({"needs_review", "unresolved"})].copy()
+    if review_subset.empty:
+        st.caption("No matches currently need review.")
+        return matches_df
+
+    st.markdown(f"**Needs Review Queue** — {len(review_subset):,} matches awaiting a decision")
+    st.caption(
+        "Accept the suggested match, reject it, or correct the settlement, district, "
+        "or coordinates directly, then click Save Reviewed Matches below."
+    )
+    display_columns = [
+        "record_id",
+        "submitted_settlement",
+        "submitted_district",
+        "suggested_settlement",
+        "suggested_district",
+        "confidence",
+        "latitude",
+        "longitude",
+        "status",
+        "accept",
+        "reject",
+    ]
+    edited_subset = st.data_editor(
+        review_subset[display_columns],
+        column_config={
+            "record_id": st.column_config.NumberColumn("Row ID", disabled=True),
+            "submitted_settlement": st.column_config.TextColumn("Submitted Settlement", disabled=True),
+            "submitted_district": st.column_config.TextColumn("Submitted District", disabled=True),
+            "suggested_settlement": st.column_config.TextColumn("Suggested Settlement"),
+            "suggested_district": st.column_config.TextColumn("Suggested District"),
+            "confidence": st.column_config.NumberColumn("Confidence %", disabled=True, format="%.1f"),
+            "latitude": st.column_config.NumberColumn("Latitude", format="%.6f"),
+            "longitude": st.column_config.NumberColumn("Longitude", format="%.6f"),
+            "status": st.column_config.SelectboxColumn(
+                "Status",
+                options=["needs_review", "accepted", "rejected", "unresolved", "manual_accepted"],
+            ),
+            "accept": st.column_config.CheckboxColumn("Accept"),
+            "reject": st.column_config.CheckboxColumn("Reject"),
+        },
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        key="needs_review_editor",
+    )
+    return _merge_reviewed_matches(matches_df, edited_subset)
+
+
 def _matching_panel() -> None:
     matches_df = st.session_state.get("match_df", pd.DataFrame())
     stats = matching_statistics(matches_df)
@@ -810,6 +873,9 @@ def _matching_panel() -> None:
     _prune_matching_warnings(semantic_ready, ollama_ready)
     for warning_message in st.session_state.get("matching_warnings", []):
         st.warning(warning_message)
+
+    matches_df = _review_queue_editor(matches_df)
+    st.session_state.match_df = matches_df
 
     c1, c2 = st.columns([1, 1])
     with c1:
@@ -867,6 +933,44 @@ def _response_map_html(processed_df: pd.DataFrame) -> str:
     return html_output
 
 
+_MAP_STATUS_ORDER = [
+    "auto_accepted",
+    "accepted",
+    "manual_accepted",
+    "needs_review",
+    "unresolved",
+    "rejected",
+    "already_geocoded",
+]
+
+
+def _map_legend_items(processed_df: pd.DataFrame, matches_df: pd.DataFrame | None) -> list[tuple[str, str]]:
+    seen: dict[str, str] = {}
+    if "Match Status" in processed_df.columns:
+        for status in processed_df["Match Status"].dropna().astype(str).str.lower().unique():
+            seen.setdefault(status, STATUS_COLORS.get(status, "#0078D4"))
+    if matches_df is not None and not matches_df.empty and "status" in matches_df.columns:
+        review_statuses = {"needs_review", "unresolved", "rejected"}
+        for status in matches_df["status"].dropna().astype(str).str.lower().unique():
+            if status in review_statuses:
+                seen.setdefault(status, STATUS_COLORS.get(status, "#FFB900"))
+    ordered_statuses = sorted(
+        seen,
+        key=lambda status: _MAP_STATUS_ORDER.index(status) if status in _MAP_STATUS_ORDER else len(_MAP_STATUS_ORDER),
+    )
+    return [(status.replace("_", " ").title(), seen[status]) for status in ordered_statuses]
+
+
+def _map_legend_html(processed_df: pd.DataFrame, matches_df: pd.DataFrame | None) -> str:
+    items = _map_legend_items(processed_df, matches_df)
+    if not items:
+        return ""
+    swatches = "".join(
+        f'<span><i class="dot" style="background:{color};"></i>{_e(label)}</span>' for label, color in items
+    )
+    return f'<div class="map-legend">{swatches}</div>'
+
+
 def _map_panel() -> None:
     processed_df = _ensure_processed()
     if processed_df.empty:
@@ -880,13 +984,17 @@ def _map_panel() -> None:
         )
         return
 
+    matches_df = st.session_state.get("match_df")
     _html('<div class="section-title outside-title">Settlements Preview Map</div>')
+    legend_html = _map_legend_html(processed_df, matches_df)
+    if legend_html:
+        _html(legend_html)
     _html(_map_metric_items(processed_df))
     try:
         response_map = create_response_map(
             processed_df,
             st.session_state.get("boundary_gdf"),
-            st.session_state.get("match_df"),
+            matches_df,
         )
         try:
             from streamlit_folium import st_folium
