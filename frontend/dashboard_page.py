@@ -20,7 +20,7 @@ from backend.qa_report import export_qa_excel_report, export_qa_pdf_report
 from backend.settlement_matcher import match_records, matching_statistics
 from backend.utils import detect_column_map, output_path, safe_percent
 from backend.validate_data import validate_response_data
-from config import APP_NAME, APP_TAGLINE, ASSETS_DIR, SUPPORTED_SPATIAL_EXTENSIONS
+from config import APP_NAME, APP_TAGLINE, ASSETS_DIR, STATIC_DIR, SUPPORTED_SPATIAL_EXTENSIONS
 
 
 OUTPUT_ITEMS = [
@@ -418,9 +418,22 @@ def _metric(metrics: dict[str, Any], key: str, default: int | float = 0) -> Any:
     return metrics.get(key, default) if metrics else default
 
 
+def _user_guide_href() -> str:
+    guide_path = STATIC_DIR / "user_guide.html"
+    if not guide_path.exists():
+        return ""
+    return "app/static/user_guide.html"
+
+
 def _top_header() -> None:
     mark = _file_icon()
     mark_html = f'<img src="{mark}" alt="OCHA" />' if mark else '<span>OCHA</span>'
+    guide_href = _user_guide_href()
+    guide_html = (
+        f'<a class="about-pill" href="{_e(guide_href)}" target="_blank" rel="noopener noreferrer">User Guide</a>'
+        if guide_href
+        else '<span class="about-pill">User Guide</span>'
+    )
     _html(
         f"""
         <div class="ocha-shell-header">
@@ -433,7 +446,7 @@ def _top_header() -> None:
             </div>
             <div class="ocha-header-actions">
                 <span class="local-mode">Local Mode <span>(All data stays on this device)</span></span>
-                <span class="about-pill">About</span>
+                {guide_html}
             </div>
         </div>
         """,
@@ -752,7 +765,7 @@ def _map_panel() -> None:
 
     _html('<div class="section-title outside-title">Settlements Preview Map</div>')
     try:
-        components.html(_response_map_html(processed_df), height=440)
+        components.html(_response_map_html(processed_df), height=760, scrolling=False)
     except Exception as error:
         st.warning(f"Map preview is unavailable: {error}")
 
@@ -855,12 +868,12 @@ def render() -> None:
 
     _validation_summary(metrics)
 
-    match_col, map_col, output_col = st.columns([1.55, 1, 0.95], gap="small")
+    match_col, output_col = st.columns([1.6, 1], gap="small")
     with match_col:
         _matching_panel()
-    with map_col:
-        _map_panel()
     with output_col:
         _outputs_panel()
+
+    _map_panel()
 
     _local_notice()

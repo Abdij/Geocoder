@@ -13,7 +13,7 @@ def _default_center() -> list[float]:
 def create_response_map(processed_df: pd.DataFrame, boundary_gdf=None, matches_df: pd.DataFrame | None = None):
     try:
         import folium
-        from folium.plugins import MarkerCluster
+        from folium.plugins import Fullscreen, MarkerCluster, MiniMap
     except ImportError as error:
         raise RuntimeError("Folium is required for the interactive map.") from error
 
@@ -32,7 +32,18 @@ def create_response_map(processed_df: pd.DataFrame, boundary_gdf=None, matches_d
         if valid.any():
             center = [float(lat[valid].mean()), float(lon[valid].mean())]
 
-    response_map = folium.Map(location=center, zoom_start=6, tiles="CartoDB positron", control_scale=True)
+    response_map = folium.Map(
+        location=center,
+        zoom_start=6,
+        tiles="CartoDB positron",
+        control_scale=True,
+        width="100%",
+        height="100%",
+    )
+    folium.TileLayer("OpenStreetMap", name="OpenStreetMap").add_to(response_map)
+    folium.TileLayer("Esri.WorldImagery", name="Satellite").add_to(response_map)
+    Fullscreen(position="topleft", title="Expand to full screen", title_cancel="Exit full screen").add_to(response_map)
+    MiniMap(toggle_display=True, position="bottomleft").add_to(response_map)
 
     if boundary_gdf is not None and len(boundary_gdf):
         try:

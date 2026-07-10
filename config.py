@@ -9,8 +9,9 @@ ASSETS_DIR = BASE_DIR / "assets"
 DATA_DIR = BASE_DIR / "data"
 UPLOADS_DIR = BASE_DIR / "uploads"
 OUTPUTS_DIR = BASE_DIR / "outputs"
+STATIC_DIR = BASE_DIR / "static"
 
-for directory in (ASSETS_DIR, DATA_DIR, UPLOADS_DIR, OUTPUTS_DIR):
+for directory in (ASSETS_DIR, DATA_DIR, UPLOADS_DIR, OUTPUTS_DIR, STATIC_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_CRS = "EPSG:4326"

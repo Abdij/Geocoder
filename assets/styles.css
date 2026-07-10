@@ -33,10 +33,17 @@ body,
 header[data-testid="stHeader"] {
     background: transparent;
     height: 0;
+    pointer-events: none;
 }
 
 [data-testid="stToolbar"] {
     top: 0.35rem;
+    pointer-events: none;
+}
+
+header[data-testid="stHeader"] button,
+header[data-testid="stHeader"] [role="button"] {
+    pointer-events: auto;
 }
 
 [data-testid="stSidebar"] {
@@ -138,6 +145,15 @@ header[data-testid="stHeader"] {
 .about-pill {
     border: 1px solid rgba(255, 255, 255, 0.52);
     color: #e6f0ff;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+a.about-pill:hover,
+a.about-pill:focus-visible {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: #ffffff;
 }
 
 .workflow-panel {
@@ -579,6 +595,10 @@ header[data-testid="stHeader"] {
     text-align: center;
 }
 
+.empty-map {
+    min-height: 760px;
+}
+
 .output-list {
     display: grid;
     gap: 0.58rem;
@@ -707,5 +727,9 @@ iframe {
 
     .panel-fill {
         min-height: auto;
+    }
+
+    .empty-map {
+        min-height: 420px;
     }
 }
