@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import html
+import importlib.util
 import time
 import zipfile
 from pathlib import Path
@@ -37,6 +38,7 @@ OUTPUT_TITLES = [title for title, _, _ in OUTPUT_ITEMS]
 OUTPUT_KEY_BY_TITLE = {title: key for title, key, _ in OUTPUT_ITEMS}
 EXCEL_OUTPUT_KEYS = {"Cleaned Excel", "District Workbook", "District Summary"}
 GIS_OUTPUT_KEYS = {"Shapefile ZIP", "GeoPackage", "GeoJSON"}
+DASHBOARD_MAP_HEIGHT = 880
 
 
 def _e(value: Any) -> str:
@@ -66,6 +68,7 @@ def _state_defaults() -> None:
         "processed_df": pd.DataFrame(),
         "generated_outputs": {},
         "output_errors": [],
+        "output_setup_notice": "",
         "output_stage_timings": [],
         "processing_seconds": None,
         "source_files": {},
@@ -85,6 +88,7 @@ def _state_defaults() -> None:
 def _clear_generated_outputs() -> None:
     st.session_state.generated_outputs = {}
     st.session_state.output_errors = []
+    st.session_state.output_setup_notice = ""
     st.session_state.output_stage_timings = []
     st.session_state.download_cache = {}
 
@@ -133,6 +137,7 @@ def _reset_workflow() -> None:
         "processed_df",
         "generated_outputs",
         "output_errors",
+        "output_setup_notice",
         "output_stage_timings",
         "processing_seconds",
         "source_files",
@@ -146,6 +151,8 @@ def _reset_workflow() -> None:
             st.session_state[key] = {}
         elif key in ("output_errors", "matching_warnings", "output_stage_timings"):
             st.session_state[key] = []
+        elif key == "output_setup_notice":
+            st.session_state[key] = ""
         else:
             st.session_state[key] = None if key == "processing_seconds" else {}
     st.session_state.boundary_gdf = None
@@ -225,19 +232,27 @@ def _ensure_validation() -> dict[str, object]:
     return st.session_state.validation_report
 
 
+def _package_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
+
+
+def _rapidfuzz_available() -> bool:
+    return _package_available("rapidfuzz")
+
+
 def _semantic_available() -> bool:
-    try:
-        import sentence_transformers  # noqa: F401
-    except ImportError:
-        return False
-    return True
+    return _package_available("sentence_transformers")
 
 
-def _ollama_available() -> bool:
+def _reportlab_available() -> bool:
+    return _package_available("reportlab")
+
+
+def _ollama_available(timeout: float = 2.0) -> bool:
     try:
         import requests
 
-        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        response = requests.get("http://localhost:11434/api/tags", timeout=timeout)
         return response.ok
     except Exception:
         return False
@@ -352,8 +367,19 @@ def _generate_outputs() -> None:
     outputs: dict[str, str] = {}
     errors: list[str] = []
     stage_timings: list[tuple[str, float]] = []
+    setup_notice = ""
 
     _clear_generated_outputs()
+    if "QA PDF Report" in selected_keys and not _reportlab_available():
+        selected_keys = set(selected_keys)
+        selected_keys.remove("QA PDF Report")
+        setup_notice = (
+            "QA PDF Report was skipped because ReportLab is not available in the active Python "
+            "environment. Run the app from .venv or install the project requirements to enable it."
+        )
+    if not selected_keys:
+        st.session_state.output_setup_notice = setup_notice or "No runnable outputs were selected."
+        return
 
     def run_stage(label: str, action) -> None:
         stage_started = time.perf_counter()
@@ -411,6 +437,7 @@ def _generate_outputs() -> None:
         outputs["All Outputs ZIP"] = zip_file
     st.session_state.generated_outputs = outputs
     st.session_state.output_errors = errors
+    st.session_state.output_setup_notice = setup_notice
     st.session_state.output_stage_timings = stage_timings
 
 
@@ -642,6 +669,49 @@ def _status_class(status: str) -> str:
     return "reject"
 
 
+def _ai_status_item(title: str, detail: str, ready: bool, required: bool = False) -> str:
+    state = "ready" if ready else "blocked" if required else "optional"
+    label = "Ready" if ready else "Missing" if required else "Optional"
+    return f"""
+    <div class="ai-status-item {state}">
+        <div>
+            <strong>{_e(title)}</strong>
+            <span>{_e(detail)}</span>
+        </div>
+        <em>{_e(label)}</em>
+    </div>
+    """
+
+
+def _ai_readiness_panel(semantic_ready: bool, ollama_ready: bool) -> None:
+    _html(
+        f"""
+        <div class="ai-readiness">
+            {_ai_status_item("RapidFuzz matcher", "Core fuzzy settlement matching engine", _rapidfuzz_available(), required=True)}
+            {_ai_status_item("Sentence Transformers", "Local semantic matching for spelling and wording variants", semantic_ready)}
+            {_ai_status_item("Ollama qwen2.5", "Local reasoning notes for low-confidence review cases", ollama_ready)}
+        </div>
+        """,
+    )
+
+
+def _prune_matching_warnings(semantic_ready: bool, ollama_ready: bool) -> None:
+    warnings = st.session_state.get("matching_warnings", [])
+    if not warnings:
+        return
+    use_semantic = st.session_state.get("use_semantic", False)
+    use_ollama = st.session_state.get("use_ollama", False)
+    cleaned: list[str] = []
+    for warning in warnings:
+        lowered = warning.lower()
+        if "sentence-transformers" in lowered and (semantic_ready or not use_semantic):
+            continue
+        if "ollama" in lowered and (ollama_ready or not use_ollama):
+            continue
+        cleaned.append(warning)
+    st.session_state.matching_warnings = cleaned
+
+
 def _matching_table(matches_df: pd.DataFrame) -> str:
     if matches_df is None or matches_df.empty:
         return '<div class="empty-panel">Run matching to populate settlement suggestions.</div>'
@@ -686,6 +756,12 @@ def _matching_table(matches_df: pd.DataFrame) -> str:
 def _matching_panel() -> None:
     matches_df = st.session_state.get("match_df", pd.DataFrame())
     stats = matching_statistics(matches_df)
+    semantic_ready = _semantic_available()
+    ollama_ready = _ollama_available(timeout=0.6)
+    if not semantic_ready:
+        st.session_state.use_semantic = False
+    if not ollama_ready:
+        st.session_state.use_ollama = False
     ai_enabled = st.session_state.get("use_semantic", False) or st.session_state.get("use_ollama", False)
     ai_label = " <span>(AI Enabled)</span>" if ai_enabled else ""
     _html(
@@ -703,16 +779,32 @@ def _matching_panel() -> None:
         """,
     )
 
-    st.checkbox("Enable semantic matching with Sentence Transformers", key="use_semantic")
-    st.caption("Improves settlement matching using local text embeddings. May be slower on first run.")
+    _ai_readiness_panel(semantic_ready, ollama_ready)
+
+    st.checkbox(
+        "Enable semantic matching with Sentence Transformers",
+        key="use_semantic",
+        disabled=not semantic_ready,
+        help="Uses the local all-MiniLM-L6-v2 embedding model when the package is available.",
+    )
+    st.caption(
+        "Improves settlement matching using local text embeddings. "
+        "Install requirements or run the project virtual environment if this is unavailable."
+    )
     if st.session_state.get("use_semantic"):
         st.info("Semantic matching enabled.")
 
-    st.checkbox("Enable Ollama reasoning notes", key="use_ollama")
-    st.caption("Adds short local AI reasoning notes for low-confidence matches. Requires Ollama running locally.")
+    st.checkbox(
+        "Enable Ollama reasoning notes",
+        key="use_ollama",
+        disabled=not ollama_ready,
+        help="Requires a local Ollama server with qwen2.5 available at localhost:11434.",
+    )
+    st.caption("Adds short local AI reasoning notes for low-confidence matches. Start Ollama locally to enable it.")
     if st.session_state.get("use_ollama"):
         st.info("Ollama reasoning enabled. Make sure Ollama is running with qwen2.5.")
 
+    _prune_matching_warnings(semantic_ready, ollama_ready)
     for warning_message in st.session_state.get("matching_warnings", []):
         st.warning(warning_message)
 
@@ -726,6 +818,28 @@ def _matching_panel() -> None:
             st.session_state.match_df = normalize_review_statuses(matches_df)
             _apply_geocodes()
             st.rerun()
+
+
+def _map_metric_items(processed_df: pd.DataFrame) -> str:
+    columns = detect_column_map(processed_df)
+    lat_col = columns.get("latitude")
+    lon_col = columns.get("longitude")
+    district_col = columns.get("district")
+    valid_points = 0
+    if lat_col and lon_col:
+        lat = pd.to_numeric(processed_df[lat_col], errors="coerce")
+        lon = pd.to_numeric(processed_df[lon_col], errors="coerce")
+        valid_points = int((lat.between(-90, 90) & lon.between(-180, 180)).sum())
+    district_count = int(processed_df[district_col].dropna().nunique()) if district_col else 0
+    boundary_gdf = st.session_state.get("boundary_gdf")
+    boundary_count = int(len(boundary_gdf)) if boundary_gdf is not None else 0
+    return f"""
+    <div class="map-stat-grid">
+        <div class="map-stat"><span>Mapped Records</span><strong>{valid_points:,}</strong></div>
+        <div class="map-stat"><span>Districts</span><strong>{district_count:,}</strong></div>
+        <div class="map-stat"><span>Boundary Features</span><strong>{boundary_count:,}</strong></div>
+    </div>
+    """
 
 
 def _response_map_html(processed_df: pd.DataFrame) -> str:
@@ -764,23 +878,42 @@ def _map_panel() -> None:
         return
 
     _html('<div class="section-title outside-title">Settlements Preview Map</div>')
+    _html(_map_metric_items(processed_df))
     try:
-        components.html(_response_map_html(processed_df), height=760, scrolling=False)
+        response_map = create_response_map(
+            processed_df,
+            st.session_state.get("boundary_gdf"),
+            st.session_state.get("match_df"),
+        )
+        try:
+            from streamlit_folium import st_folium
+
+            st_folium(
+                response_map,
+                use_container_width=True,
+                height=DASHBOARD_MAP_HEIGHT,
+                returned_objects=[],
+            )
+        except ImportError:
+            components.html(_response_map_html(processed_df), height=DASHBOARD_MAP_HEIGHT + 20, scrolling=False)
     except Exception as error:
         st.warning(f"Map preview is unavailable: {error}")
 
 
 def _output_row(title: str, output_key: str, detail: str, outputs: dict[str, str]) -> str:
     available = output_key in outputs and Path(outputs[output_key]).exists()
-    state = "ready" if available else "pending"
+    blocked = output_key == "QA PDF Report" and not _reportlab_available() and not available
+    state = "ready" if available else "blocked" if blocked else "pending"
+    status_label = "Ready" if available else "Setup" if blocked else "Pending"
+    detail_text = "ReportLab missing in active Python environment" if blocked else detail
     return f"""
     <div class="output-card {state}">
         <div class="output-icon">{_e(title[:1])}</div>
         <div>
             <strong>{_e(title)}</strong>
-            <span>{_e(detail)}</span>
+            <span>{_e(detail_text)}</span>
         </div>
-        <em>{'Ready' if available else 'Pending'}</em>
+        <em>{_e(status_label)}</em>
     </div>
     """
 
@@ -788,6 +921,7 @@ def _output_row(title: str, output_key: str, detail: str, outputs: dict[str, str
 def _outputs_panel() -> None:
     outputs = st.session_state.get("generated_outputs", {})
     errors = st.session_state.get("output_errors", [])
+    setup_notice = st.session_state.get("output_setup_notice", "")
     rows = [_output_row(title, key, detail, outputs) for title, key, detail in OUTPUT_ITEMS]
     _html(
         f"""
@@ -797,6 +931,8 @@ def _outputs_panel() -> None:
         </div>
         """,
     )
+    if setup_notice:
+        st.warning(setup_notice)
     for error in errors:
         st.error(error)
 

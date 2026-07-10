@@ -8,6 +8,9 @@ from backend.geocoder import apply_geocodes, normalize_review_statuses
 from backend.map_generator import create_response_map
 
 
+REVIEW_MAP_HEIGHT = 820
+
+
 def _render_map(processed_df: pd.DataFrame, matches_df: pd.DataFrame) -> None:
     try:
         response_map = create_response_map(
@@ -18,9 +21,9 @@ def _render_map(processed_df: pd.DataFrame, matches_df: pd.DataFrame) -> None:
         try:
             from streamlit_folium import st_folium
 
-            st_folium(response_map, use_container_width=True, height=560)
+            st_folium(response_map, use_container_width=True, height=REVIEW_MAP_HEIGHT, returned_objects=[])
         except ImportError:
-            components.html(response_map._repr_html_(), height=580)
+            components.html(response_map._repr_html_(), height=REVIEW_MAP_HEIGHT + 20)
     except Exception as error:
         st.warning(f"Map preview is unavailable: {error}")
 
