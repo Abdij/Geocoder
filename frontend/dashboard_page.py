@@ -446,10 +446,13 @@ def _metric(metrics: dict[str, Any], key: str, default: int | float = 0) -> Any:
 
 
 def _user_guide_href() -> str:
-    guide_path = STATIC_DIR / "user_guide.html"
-    if not guide_path.exists():
-        return ""
-    return "app/static/user_guide.html"
+    guide_pdf_path = STATIC_DIR / "user_guide.pdf"
+    if guide_pdf_path.exists():
+        return "app/static/user_guide.pdf"
+    guide_html_path = STATIC_DIR / "user_guide.html"
+    if guide_html_path.exists():
+        return "app/static/user_guide.html"
+    return ""
 
 
 def _top_header() -> None:
