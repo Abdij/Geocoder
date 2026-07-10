@@ -50,6 +50,8 @@ def apply_geocodes(response_df: pd.DataFrame, matches_df: pd.DataFrame | None) -
         df[lat_col] = np.nan
     if lon_col not in df.columns:
         df[lon_col] = np.nan
+    df[lat_col] = coerce_numeric(df[lat_col])
+    df[lon_col] = coerce_numeric(df[lon_col])
 
     metadata_defaults = {
         "Match Status": "already_geocoded",
