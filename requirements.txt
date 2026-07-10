@@ -8,6 +8,8 @@ shapely>=2.0
 pyogrio>=0.7
 fiona>=1.9
 rapidfuzz>=3.6
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2
 sentence-transformers>=2.7
 folium>=0.16
 streamlit-folium>=0.20
