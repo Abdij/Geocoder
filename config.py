@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-APP_NAME = "Settlement Matching and Geocoder"
+APP_NAME = "Settlement Matching and Geocoding Tool"
 APP_TAGLINE = "Local AI-assisted humanitarian GIS processing for settlement response data"
 
 BASE_DIR = Path(__file__).resolve().parent
