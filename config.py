@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-APP_NAME = "OCHA Settlement Response Processor"
+APP_NAME = "OCHA Settlement Matching and Geocoder"
 APP_TAGLINE = "Local AI-assisted humanitarian GIS processing for settlement response data"
 
 BASE_DIR = Path(__file__).resolve().parent
