@@ -14,6 +14,8 @@ STATIC_DIR = BASE_DIR / "static"
 for directory in (ASSETS_DIR, DATA_DIR, UPLOADS_DIR, OUTPUTS_DIR, STATIC_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
+PLACE_INTELLIGENCE_DB_PATH = DATA_DIR / "place_intelligence.db"
+
 DEFAULT_CRS = "EPSG:4326"
 PROJECTED_CRS = "EPSG:3857"
 
