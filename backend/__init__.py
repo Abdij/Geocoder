@@ -1,1 +1,1 @@
-"""Backend processing package for the OCHA Settlement Response Processor."""
+"""Backend processing package for the Settlement Matching and Geocoding Tool."""

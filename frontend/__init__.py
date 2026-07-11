@@ -1,1 +1,1 @@
-"""Streamlit page modules for the OCHA Settlement Response Processor."""
+"""Streamlit page modules for the Settlement Matching and Geocoding Tool."""

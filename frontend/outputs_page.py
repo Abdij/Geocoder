@@ -12,6 +12,7 @@ from backend.gis_exporter import export_gis_outputs
 from backend.qa_report import export_qa_reports
 from backend.validate_data import validate_response_data
 from backend.utils import output_path
+from config import APP_NAME
 from widgets.status import metric_card
 
 
@@ -35,7 +36,7 @@ def _write_log(outputs: dict[str, str], elapsed: float) -> str:
     validation = st.session_state.get("validation_report", {})
     metrics = validation.get("metrics", {}) if validation else {}
     lines = [
-        "OCHA Settlement Response Processor - Processing Log",
+        f"{APP_NAME} - Processing Log",
         f"Processing time: {elapsed:.2f} seconds",
         "",
         "Validation metrics:",

@@ -7,6 +7,7 @@ import pandas as pd
 
 from backend.district_summary import build_summary_tables
 from backend.utils import output_path
+from config import APP_NAME
 
 
 QA_OUTPUT_KEYS = {"QA Excel Report", "QA PDF Report"}
@@ -72,7 +73,7 @@ def export_qa_pdf_report(
     document = SimpleDocTemplate(str(path), pagesize=A4, rightMargin=32, leftMargin=32, topMargin=32, bottomMargin=32)
     styles = getSampleStyleSheet()
     elements = [
-        Paragraph("OCHA Settlement Response Processor", styles["Title"]),
+        Paragraph(APP_NAME, styles["Title"]),
         Paragraph("Quality Assurance Report", styles["Heading2"]),
         Spacer(1, 12),
     ]

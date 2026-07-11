@@ -322,7 +322,7 @@ def _write_log(outputs: dict[str, str], elapsed: float, stage_timings: list[tupl
     validation = st.session_state.get("validation_report", {})
     metrics = validation.get("metrics", {}) if validation else {}
     lines = [
-        "OCHA Settlement Response Processor - Processing Log",
+        f"{APP_NAME} - Processing Log",
         f"Processing time: {elapsed:.2f} seconds",
         "",
         "Validation metrics:",

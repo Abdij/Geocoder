@@ -1,4 +1,4 @@
-# OCHA Settlement Response Processor — User Guide
+# Settlement Matching and Geocoding Tool — User Guide
 
 **For IM Officers, GIS Specialists, and Data Assistants**
 

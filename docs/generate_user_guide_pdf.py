@@ -179,7 +179,7 @@ def build() -> None:
         rightMargin=MARGIN,
         topMargin=MARGIN,
         bottomMargin=MARGIN,
-        title="OCHA Settlement Response Processor - User Guide",
+        title="Settlement Matching and Geocoding Tool - User Guide",
     )
 
     elements: list = []
@@ -187,7 +187,7 @@ def build() -> None:
     # --- Cover ---
     elements.append(Spacer(1, 4 * cm))
     elements.append(Paragraph("USER GUIDE", ParagraphStyle("Eyebrow", parent=styles["Normal"], fontSize=10.5, textColor=NAVY, fontName="Helvetica-Bold", spaceAfter=10)))
-    elements.append(Paragraph("OCHA Settlement Response Processor", styles["CoverTitle"]))
+    elements.append(Paragraph("Settlement Matching and Geocoding Tool", styles["CoverTitle"]))
     elements.append(Paragraph("For IM Officers, GIS Specialists, and Data Assistants", styles["CoverSubtitle"]))
     elements.append(Spacer(1, 10))
     elements.append(

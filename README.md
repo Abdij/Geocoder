@@ -1,5 +1,5 @@
 ---
-title: OCHA Settlement Response Processor
+title: Settlement Matching and Geocoding Tool
 emoji: 🌍
 colorFrom: blue
 colorTo: green
@@ -8,7 +8,7 @@ app_file: app.py
 pinned: false
 ---
 
-# OCHA Settlement Response Processor
+# Settlement Matching and Geocoding Tool
 
 Local AI-assisted humanitarian GIS processing for settlement response data. The app runs on a Windows workstation with Streamlit and open-source Python libraries.
 
