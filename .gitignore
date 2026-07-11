@@ -8,3 +8,5 @@ outputs/*
 !outputs/.gitkeep
 
 .streamlit/secrets.toml
+
+data/place_intelligence.db

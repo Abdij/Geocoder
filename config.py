@@ -19,8 +19,15 @@ PLACE_INTELLIGENCE_DB_PATH = DATA_DIR / "place_intelligence.db"
 DEFAULT_CRS = "EPSG:4326"
 PROJECTED_CRS = "EPSG:3857"
 
-MATCH_AUTO_ACCEPT = 90
-MATCH_NEEDS_REVIEW = 75
+# Raised from 90/75 as part of the Place Intelligence Engine upgrade: the
+# layered candidate generator and confidence_scorer's hard safety gates now
+# carry more of the acceptance burden, so the confidence bar itself is
+# stricter. See README migration notes for the full rationale.
+MATCH_AUTO_ACCEPT = 95
+MATCH_NEEDS_REVIEW = 85
+AMBIGUITY_MARGIN = 5
+MAX_AUTO_ACCEPT_DISTANCE_KM = 15
+REPEATED_REJECTION_BLOCK_THRESHOLD = 2
 
 SUPPORTED_TABLE_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 SUPPORTED_SPATIAL_EXTENSIONS = {".geojson", ".json", ".gpkg", ".shp", ".zip"}

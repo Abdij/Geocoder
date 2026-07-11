@@ -3,6 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from config import (
+    AMBIGUITY_MARGIN,
+    MATCH_AUTO_ACCEPT,
+    MATCH_NEEDS_REVIEW,
+    MAX_AUTO_ACCEPT_DISTANCE_KM,
+    REPEATED_REJECTION_BLOCK_THRESHOLD,
+)
+
 # Name similarity carries the most weight since a submitted settlement name is
 # the primary signal analysts are trying to resolve; the rest corroborate it.
 DEFAULT_WEIGHTS: dict[str, float] = {
@@ -25,16 +33,6 @@ _STALE_DECAY_POINTS = 15.0
 _REJECTION_PENALTY_PER_COUNT = 15.0
 _REJECTION_PENALTY_CAP = 30.0
 
-# Updated per the Place Intelligence Engine upgrade - stricter than the
-# original 90/75 split (see README migration notes for why: the layered
-# candidate generator and hard safety gates below now do more of the work
-# that used to rely on a lower confidence bar).
-MATCH_AUTO_ACCEPT = 95.0
-MATCH_NEEDS_REVIEW = 85.0
-
-AMBIGUITY_MARGIN = 5.0
-MAX_AUTO_ACCEPT_DISTANCE_KM = 15.0
-REPEATED_REJECTION_BLOCK_THRESHOLD = 2
 # Below this, an admin (district/region) similarity score means a genuine
 # contradiction rather than "unknown" - _admin_score() returns exactly 60
 # for missing/unknown data, safely above this line, and a real fuzzy

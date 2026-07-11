@@ -99,3 +99,29 @@ def test_evaluate_spatial_evidence_boundary_checks_are_none_without_boundary_lay
     assert evidence.submitted_in_own_district is None
     assert evidence.submitted_in_candidate_district is None
     assert evidence.candidate_in_own_district is None
+
+
+def test_evaluate_spatial_evidence_out_of_range_submitted_latitude_skips_distance(recwarn):
+    # A real-world data-entry error (e.g. latitude 99.1) must not be fed to
+    # the distance calculation - it should be treated as unavailable, not
+    # produce a nonsense distance or a geopy warning.
+    evidence = evaluate_spatial_evidence(
+        submitted_latitude=99.1,
+        submitted_longitude=44.77,
+        candidate_latitude=2.3076,
+        candidate_longitude=44.7723,
+    )
+    assert evidence.distance_km is None
+    assert evidence.spatial_score is None
+    assert len(recwarn) == 0
+
+
+def test_evaluate_spatial_evidence_out_of_range_candidate_coordinate_skips_distance():
+    evidence = evaluate_spatial_evidence(
+        submitted_latitude=2.3076,
+        submitted_longitude=44.7723,
+        candidate_latitude=199.0,
+        candidate_longitude=44.7723,
+    )
+    assert evidence.distance_km is None
+    assert evidence.spatial_score is None

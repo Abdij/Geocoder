@@ -171,8 +171,24 @@ def evaluate_spatial_evidence(
     has_submitted_coords = submitted_latitude is not None and submitted_longitude is not None
     has_candidate_coords = candidate_latitude is not None and candidate_longitude is not None
 
+    def _is_valid_point(lat, lon) -> bool:
+        try:
+            return -90 <= float(lat) <= 90 and -180 <= float(lon) <= 180
+        except (TypeError, ValueError):
+            return False
+
+    # Distance requires two real-world points; an out-of-range submitted
+    # coordinate (e.g. a data-entry error like latitude 99.1) is exactly the
+    # kind of "invalid coordinate" this app already flags during validation -
+    # feeding it to geopy anyway produces a nonsense distance and a confusing
+    # warning, so treat it as unavailable rather than computing garbage.
     distance_km: float | None = None
-    if has_submitted_coords and has_candidate_coords:
+    if (
+        has_submitted_coords
+        and has_candidate_coords
+        and _is_valid_point(submitted_latitude, submitted_longitude)
+        and _is_valid_point(candidate_latitude, candidate_longitude)
+    ):
         try:
             distance_km = haversine_distance_km(
                 float(submitted_latitude),
