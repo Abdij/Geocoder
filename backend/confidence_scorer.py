@@ -25,6 +25,22 @@ _STALE_DECAY_POINTS = 15.0
 _REJECTION_PENALTY_PER_COUNT = 15.0
 _REJECTION_PENALTY_CAP = 30.0
 
+# Updated per the Place Intelligence Engine upgrade - stricter than the
+# original 90/75 split (see README migration notes for why: the layered
+# candidate generator and hard safety gates below now do more of the work
+# that used to rely on a lower confidence bar).
+MATCH_AUTO_ACCEPT = 95.0
+MATCH_NEEDS_REVIEW = 85.0
+
+AMBIGUITY_MARGIN = 5.0
+MAX_AUTO_ACCEPT_DISTANCE_KM = 15.0
+REPEATED_REJECTION_BLOCK_THRESHOLD = 2
+# Below this, an admin (district/region) similarity score means a genuine
+# contradiction rather than "unknown" - _admin_score() returns exactly 60
+# for missing/unknown data, safely above this line, and a real fuzzy
+# mismatch between two different known names normally scores well below it.
+ADMIN_CONTRADICTION_THRESHOLD = 50.0
+
 
 def historical_evidence_score(
     approval_count: int,
@@ -162,3 +178,66 @@ def composite_confidence(
         rejection_penalty=rejection_penalty_value,
         explanation=explanation,
     )
+
+
+@dataclass
+class SafetyCheckResult:
+    status: str  # "auto_accepted" | "needs_review" | "unresolved"
+    blocked_reasons: list[str]
+
+
+def determine_match_status(
+    *,
+    confidence: float,
+    district_score: float | None = None,
+    region_score: float | None = None,
+    is_ambiguous_national_name: bool = False,
+    spatial_distance_km: float | None = None,
+    second_candidate_confidence: float | None = None,
+    rejection_count: int = 0,
+    candidate_missing_admin_info: bool = False,
+    max_distance_km: float = MAX_AUTO_ACCEPT_DISTANCE_KM,
+    ambiguity_margin: float = AMBIGUITY_MARGIN,
+    auto_accept_threshold: float = MATCH_AUTO_ACCEPT,
+    needs_review_threshold: float = MATCH_NEEDS_REVIEW,
+) -> SafetyCheckResult:
+    """Decide auto_accepted / needs_review / unresolved, with hard safety gates.
+
+    A record is never auto-accepted (regardless of how high its confidence
+    score is) when any of the following hold: a district or region
+    contradiction, an ambiguous national name with no district/coordinate
+    evidence to disambiguate it, spatial distance beyond the configured
+    maximum, the top two candidates being within the ambiguity margin of
+    each other, the candidate having been repeatedly rejected for this exact
+    context before, or the candidate missing required administrative
+    metadata. A blocked record still gets "needs_review" rather than
+    "unresolved" if its confidence clears that lower bar - the block only
+    removes the auto-accept option, it doesn't change how promising the
+    candidate looks to a human reviewer.
+    """
+    blocked_reasons: list[str] = []
+
+    if district_score is not None and district_score < ADMIN_CONTRADICTION_THRESHOLD:
+        blocked_reasons.append("district_contradiction")
+    if region_score is not None and region_score < ADMIN_CONTRADICTION_THRESHOLD:
+        blocked_reasons.append("region_contradiction")
+    if is_ambiguous_national_name:
+        blocked_reasons.append("ambiguous_national_name")
+    if spatial_distance_km is not None and spatial_distance_km > max_distance_km:
+        blocked_reasons.append("spatial_distance_exceeded")
+    if second_candidate_confidence is not None and (confidence - second_candidate_confidence) < ambiguity_margin:
+        blocked_reasons.append("ambiguous_top_candidates")
+    if rejection_count >= REPEATED_REJECTION_BLOCK_THRESHOLD:
+        blocked_reasons.append("repeated_rejection")
+    if candidate_missing_admin_info:
+        blocked_reasons.append("candidate_missing_admin_info")
+
+    if blocked_reasons:
+        status = "needs_review" if confidence >= needs_review_threshold else "unresolved"
+        return SafetyCheckResult(status=status, blocked_reasons=blocked_reasons)
+
+    if confidence >= auto_accept_threshold:
+        return SafetyCheckResult(status="auto_accepted", blocked_reasons=[])
+    if confidence >= needs_review_threshold:
+        return SafetyCheckResult(status="needs_review", blocked_reasons=[])
+    return SafetyCheckResult(status="unresolved", blocked_reasons=[])
