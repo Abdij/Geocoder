@@ -274,3 +274,70 @@ def test_empty_submitted_settlement_returns_no_candidates():
         columns=COLUMNS,
     )
     assert results == []
+
+
+# --- generate_candidates: semantic re-ranking / fallback --------------------
+
+
+class _FakeSemanticModel:
+    """Deterministic fake embedding model - avoids downloading a real one in tests."""
+
+    def __init__(self, embedding_by_text: dict[str, list[float]], should_raise: bool = False):
+        self._embeddings = embedding_by_text
+        self._should_raise = should_raise
+
+    def encode(self, texts, normalize_embeddings=True, show_progress_bar=False):
+        if self._should_raise:
+            raise RuntimeError("simulated model failure")
+        import numpy as np
+
+        return np.array([self._embeddings.get(text, [0.0, 0.0]) for text in texts])
+
+
+def test_semantic_model_populates_semantic_score_for_fuzzy_candidates():
+    prepared = _prepared(
+        [
+            {"Settlement": "Deeyniile", "District": "Mogadishu", "Region": "Banadir", "Latitude": 2.09, "Longitude": 45.27},
+        ]
+    )
+    query = normalize_place_name("Deynile Mogadishu Banadir")
+    candidate_text = prepared.iloc[0]["_candidate_text"]
+    fake_model = _FakeSemanticModel({query: [1.0, 0.0], candidate_text: [1.0, 0.0]})
+    embeddings = fake_model.encode([candidate_text])
+
+    results = generate_candidates(
+        submitted_settlement="Deynile",
+        submitted_district="Mogadishu",
+        submitted_region="Banadir",
+        prepared_gazetteer=prepared,
+        columns=COLUMNS,
+        semantic_model=fake_model,
+        gazetteer_embeddings=embeddings,
+    )
+    assert len(results) >= 1
+    reranked = [c for c in results if c.matching_method == "semantic_rerank"]
+    assert reranked, "expected at least one candidate to be semantically re-ranked"
+    assert reranked[0].semantic_score == 100.0  # identical embedding vectors -> cosine similarity 1.0
+
+
+def test_semantic_model_failure_falls_back_to_fuzzy_without_crashing():
+    prepared = _prepared(
+        [{"Settlement": "Deeyniile", "District": "Mogadishu", "Region": "Banadir", "Latitude": 2.09, "Longitude": 45.27}]
+    )
+    candidate_text = prepared.iloc[0]["_candidate_text"]
+    failing_model = _FakeSemanticModel({}, should_raise=True)
+    embeddings = [[1.0, 0.0]]  # any placeholder; encode() will raise before using it
+
+    results = generate_candidates(
+        submitted_settlement="Deynile",
+        submitted_district="Mogadishu",
+        submitted_region="Banadir",
+        prepared_gazetteer=prepared,
+        columns=COLUMNS,
+        semantic_model=failing_model,
+        gazetteer_embeddings=embeddings,
+    )
+    # Matching still succeeds via the fuzzy tier; no semantic_score was assigned.
+    assert len(results) >= 1
+    assert all(c.matching_method != "semantic_rerank" for c in results)
+    assert all(c.semantic_score is None for c in results)
