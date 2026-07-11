@@ -4,6 +4,9 @@ import numpy as np
 import pandas as pd
 
 from config import DEFAULT_CRS
+from backend.alias_repository import get_connection, upsert_approved_alias
+from backend.review_repository import has_existing_decision, record_rejected_candidate, record_review_decision
+from backend.text_normalizer import normalize_place_name
 from backend.utils import coerce_numeric, coordinate_masks, detect_column_map
 
 
@@ -40,9 +43,89 @@ def normalize_review_statuses(matches_df: pd.DataFrame | None) -> pd.DataFrame:
     return matches_df
 
 
+def _record_review_learning(matches_df: pd.DataFrame) -> None:
+    """Persist analyst accept/reject decisions to the local place-intelligence database.
+
+    Only ever runs on rows an analyst has explicitly accepted or rejected
+    (the accept/reject columns the review UI writes) - never from raw,
+    unreviewed model suggestions, so the alias table only ever reflects
+    confirmed human judgment. Guarded by has_existing_decision() so
+    re-saving an unchanged review (e.g. clicking "Save Reviewed Matches"
+    twice) doesn't inflate approval/rejection counts or duplicate history.
+    """
+    if matches_df is None or matches_df.empty:
+        return
+    if "accept" not in matches_df.columns and "reject" not in matches_df.columns:
+        return
+
+    conn = get_connection()
+    try:
+        for _, match in matches_df.iterrows():
+            is_accept = bool(match.get("accept", False))
+            is_reject = bool(match.get("reject", False))
+            if not is_accept and not is_reject:
+                continue
+
+            record_id = match.get("record_id")
+            record_id = int(record_id) if pd.notna(record_id) else None
+            run_id = match.get("run_id")
+            run_id = str(run_id) if pd.notna(run_id) and run_id else None
+            decision = "accepted" if is_accept else "rejected"
+
+            if has_existing_decision(conn, record_id, run_id, decision):
+                continue
+
+            submitted_settlement = match.get("submitted_settlement", "")
+            submitted_district = match.get("submitted_district", "")
+            submitted_region = match.get("submitted_region", "")
+            normalized_submitted = match.get("normalized_submitted_settlement") or normalize_place_name(
+                submitted_settlement
+            )
+            suggested_gazetteer_id = match.get("suggested_gazetteer_id", "") or ""
+            confidence = match.get("confidence")
+            confidence = float(confidence) if pd.notna(confidence) else None
+
+            record_review_decision(
+                conn,
+                record_id=record_id,
+                run_id=run_id,
+                submitted_name=submitted_settlement,
+                submitted_district=submitted_district,
+                submitted_region=submitted_region,
+                suggested_gazetteer_id=suggested_gazetteer_id or None,
+                final_gazetteer_id=suggested_gazetteer_id if is_accept else None,
+                decision=decision,
+                confidence=confidence,
+                matching_method=match.get("matching_method"),
+            )
+
+            if is_accept and suggested_gazetteer_id:
+                upsert_approved_alias(
+                    conn,
+                    normalized_submitted_name=normalized_submitted,
+                    submitted_district=submitted_district,
+                    submitted_region=submitted_region,
+                    official_gazetteer_id=suggested_gazetteer_id,
+                    official_settlement_name=match.get("suggested_settlement", ""),
+                    official_district=match.get("suggested_district", ""),
+                    official_region=match.get("suggested_region", ""),
+                )
+            elif is_reject and suggested_gazetteer_id:
+                record_rejected_candidate(
+                    conn,
+                    normalized_submitted_name=normalized_submitted,
+                    submitted_district=submitted_district,
+                    submitted_region=submitted_region,
+                    rejected_gazetteer_id=suggested_gazetteer_id,
+                )
+    finally:
+        conn.close()
+
+
 def apply_geocodes(response_df: pd.DataFrame, matches_df: pd.DataFrame | None) -> pd.DataFrame:
     df = response_df.copy()
     matches_df = normalize_review_statuses(matches_df)
+    _record_review_learning(matches_df)
     columns = detect_column_map(df)
     lat_col = columns.get("latitude") or "Latitude"
     lon_col = columns.get("longitude") or "Longitude"

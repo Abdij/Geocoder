@@ -132,6 +132,28 @@ def get_rejection_count(
     return int(row["rejection_count"]) if row is not None else 0
 
 
+def has_existing_decision(
+    conn: sqlite3.Connection,
+    record_id: int | None,
+    run_id: str | None,
+    decision: str,
+) -> bool:
+    """Whether this exact (record, run, decision) has already been logged.
+
+    Lets a caller treat re-saving an unchanged review (e.g. clicking "Save
+    Reviewed Matches" twice without changing anything) as a no-op instead of
+    inflating approval/rejection counts or duplicating audit history every
+    time the button is pressed.
+    """
+    if record_id is None or run_id is None:
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM review_decisions WHERE record_id = ? AND run_id = ? AND decision = ? LIMIT 1",
+        (record_id, run_id, decision),
+    ).fetchone()
+    return row is not None
+
+
 def list_review_decisions(conn: sqlite3.Connection) -> pd.DataFrame:
     return pd.read_sql_query("SELECT * FROM review_decisions ORDER BY decision_id", conn)
 

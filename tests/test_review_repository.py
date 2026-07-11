@@ -5,6 +5,7 @@ import pytest
 from backend.alias_repository import get_connection
 from backend.review_repository import (
     get_rejection_count,
+    has_existing_decision,
     list_rejected_candidates,
     list_review_decisions,
     record_rejected_candidate,
@@ -115,3 +116,46 @@ def test_rejection_does_not_affect_a_different_candidate(conn):
         rejected_gazetteer_id="gaz_wrong",
     )
     assert get_rejection_count(conn, "kaharey", "doolow", "gedo", "gaz_correct") == 0
+
+
+def test_has_existing_decision_false_before_any_decision_recorded(conn):
+    assert has_existing_decision(conn, record_id=1, run_id="run-1", decision="accepted") is False
+
+
+def test_has_existing_decision_true_after_recording(conn):
+    record_review_decision(
+        conn,
+        record_id=1,
+        run_id="run-1",
+        submitted_name="Kaharey",
+        submitted_district="Doolow",
+        submitted_region="Gedo",
+        suggested_gazetteer_id="gaz_abc123",
+        final_gazetteer_id="gaz_abc123",
+        decision="accepted",
+        confidence=95.0,
+        matching_method="exact",
+    )
+    assert has_existing_decision(conn, record_id=1, run_id="run-1", decision="accepted") is True
+
+
+def test_has_existing_decision_false_for_a_different_run(conn):
+    record_review_decision(
+        conn,
+        record_id=1,
+        run_id="run-1",
+        submitted_name="Kaharey",
+        submitted_district="Doolow",
+        submitted_region="Gedo",
+        suggested_gazetteer_id="gaz_abc123",
+        final_gazetteer_id="gaz_abc123",
+        decision="accepted",
+        confidence=95.0,
+        matching_method="exact",
+    )
+    assert has_existing_decision(conn, record_id=1, run_id="run-2", decision="accepted") is False
+
+
+def test_has_existing_decision_false_without_record_or_run_id(conn):
+    assert has_existing_decision(conn, record_id=None, run_id="run-1", decision="accepted") is False
+    assert has_existing_decision(conn, record_id=1, run_id=None, decision="accepted") is False
