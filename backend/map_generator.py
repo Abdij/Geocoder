@@ -5,6 +5,64 @@ import pandas as pd
 from backend.utils import coerce_numeric, detect_column_map
 from config import STATUS_COLORS
 
+# Leaflet core and the folium plugins used below (Fullscreen, MarkerCluster, MeasureControl,
+# MiniMap, MousePosition) normally load their JS/CSS from public CDNs. Machines without internet
+# access (the primary use case for the standalone desktop build) would render a blank map with no
+# error, since the browser silently fails to fetch these scripts. Vendoring them under static/ and
+# rewriting the CDN URLs below makes the map itself, markers, and controls work fully offline.
+# Basemap imagery (OpenStreetMap/CartoDB/Esri tiles) still requires internet - that can't be
+# bundled - but the map, points, and district boundaries no longer depend on it.
+_LEAFLET_VENDOR_URL_MAP = {
+    "https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js": "app/static/leaflet_vendor/leaflet.js",
+    "https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css": "app/static/leaflet_vendor/leaflet.css",
+    "https://code.jquery.com/jquery-3.7.1.min.js": "app/static/leaflet_vendor/jquery-3.7.1.min.js",
+    "https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js": "app/static/leaflet_vendor/bootstrap.bundle.min.js",
+    "https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/css/bootstrap.min.css": "app/static/leaflet_vendor/bootstrap.min.css",
+    "https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.2.0/css/all.min.css": "app/static/leaflet_vendor/all.min.css",
+    "https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.js": "app/static/leaflet_vendor/leaflet.awesome-markers.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css": "app/static/leaflet_vendor/leaflet.awesome-markers.css",
+    "https://netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap-glyphicons.css": "app/static/leaflet_vendor/bootstrap-glyphicons.css",
+    "https://cdn.jsdelivr.net/npm/leaflet.fullscreen@3.0.0/Control.FullScreen.min.js": "app/static/leaflet_vendor/Control.FullScreen.min.js",
+    "https://cdn.jsdelivr.net/npm/leaflet.fullscreen@3.0.0/Control.FullScreen.css": "app/static/leaflet_vendor/Control.FullScreen.css",
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.1.0/leaflet.markercluster.js": "app/static/leaflet_vendor/leaflet.markercluster.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.1.0/MarkerCluster.css": "app/static/leaflet_vendor/MarkerCluster.css",
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.1.0/MarkerCluster.Default.css": "app/static/leaflet_vendor/MarkerCluster.Default.css",
+    "https://cdn.jsdelivr.net/gh/ljagis/leaflet-measure@2.1.7/dist/leaflet-measure.min.js": "app/static/leaflet_vendor/leaflet-measure.min.js",
+    "https://cdn.jsdelivr.net/gh/ljagis/leaflet-measure@2.1.7/dist/leaflet-measure.min.css": "app/static/leaflet_vendor/leaflet-measure.min.css",
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet-minimap/3.6.1/Control.MiniMap.js": "app/static/leaflet_vendor/Control.MiniMap.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet-minimap/3.6.1/Control.MiniMap.css": "app/static/leaflet_vendor/Control.MiniMap.css",
+    "https://cdn.jsdelivr.net/gh/ardhi/Leaflet.MousePosition/src/L.Control.MousePosition.min.js": "app/static/leaflet_vendor/L.Control.MousePosition.min.js",
+    "https://cdn.jsdelivr.net/gh/ardhi/Leaflet.MousePosition/src/L.Control.MousePosition.min.css": "app/static/leaflet_vendor/L.Control.MousePosition.min.css",
+    "https://cdn.jsdelivr.net/gh/python-visualization/folium/folium/templates/leaflet.awesome.rotate.min.css": "app/static/leaflet_vendor/leaflet.awesome.rotate.min.css",
+}
+
+
+def _patch_branca_links_for_offline_use() -> None:
+    """Rewrite CDN URLs to local vendored copies the instant a Link is constructed.
+
+    Folium/branca plugins (Fullscreen, MarkerCluster, MeasureControl, MiniMap, MousePosition,
+    the base Leaflet/jQuery/Bootstrap includes) register their JavascriptLink/CssLink children
+    lazily inside each element's render() method - which folium-streamlit and _repr_html_() both
+    call themselves, outside our control and possibly more than once. Patching the URL at
+    construction time (rather than walking the tree after the fact) works regardless of when or
+    how many times rendering happens.
+    """
+    import branca.element as branca_element
+
+    if getattr(branca_element.Link, "_ocha_offline_patched", False):
+        return
+
+    original_init = branca_element.Link.__init__
+
+    def patched_init(self, url, *args, **kwargs):
+        original_init(self, _LEAFLET_VENDOR_URL_MAP.get(url, url), *args, **kwargs)
+
+    branca_element.Link.__init__ = patched_init
+    branca_element.Link._ocha_offline_patched = True
+
+
+_patch_branca_links_for_offline_use()
+
 
 def _default_center() -> list[float]:
     return [5.1521, 46.1996]
