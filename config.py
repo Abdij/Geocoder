@@ -97,6 +97,17 @@ COLUMN_ALIASES = {
         "population",
         "total_beneficiaries",
     ],
+    "gazetteer_id": [
+        "gazetteer_id",
+        "gazetteer id",
+        "settlement_id",
+        "settlement id",
+        "place_id",
+        "place id",
+        "p_code",
+        "pcode",
+        "gid",
+    ],
 }
 
 REQUIRED_RESPONSE_FIELDS = ["settlement", "district"]

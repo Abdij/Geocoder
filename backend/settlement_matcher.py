@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from config import MATCH_AUTO_ACCEPT, MATCH_NEEDS_REVIEW
-from backend.utils import coordinate_masks, detect_column_map, normalize_text
+from backend.utils import coordinate_masks, detect_column_map, ensure_gazetteer_ids, normalize_text
 
 try:
     from rapidfuzz import fuzz, process
@@ -134,7 +134,8 @@ def _status_for_confidence(confidence: float) -> str:
 
 def _prepare_gazetteer(gazetteer_df: pd.DataFrame) -> PreparedGazetteer:
     columns = detect_column_map(gazetteer_df)
-    data = gazetteer_df.copy()
+    data = ensure_gazetteer_ids(gazetteer_df, columns)
+    columns = detect_column_map(data)
     for field in ("settlement", "district", "region"):
         column = columns.get(field)
         data[f"_{field}_norm"] = data[column].map(normalize_text) if column else ""

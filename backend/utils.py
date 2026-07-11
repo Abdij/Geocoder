@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 import unicodedata
@@ -56,6 +57,80 @@ def detect_column_map(df: pd.DataFrame | None) -> dict[str, str | None]:
 
 def missing_required_fields(column_map: dict[str, str | None], required: Iterable[str]) -> list[str]:
     return [field for field in required if not column_map.get(field)]
+
+
+def generate_gazetteer_id(
+    settlement: Any,
+    district: Any,
+    region: Any,
+    latitude: Any,
+    longitude: Any,
+) -> str:
+    """Deterministically derive a stable gazetteer ID from a candidate's identity.
+
+    Used when an uploaded gazetteer has no ID column of its own, so matches,
+    review decisions, aliases, and exports can reference a stable key instead
+    of a DataFrame row number (which shifts if rows are re-ordered or the
+    gazetteer is re-uploaded).
+    """
+    from backend.text_normalizer import normalize_place_name
+
+    settlement_norm = normalize_place_name(settlement)
+    district_norm = normalize_place_name(district)
+    region_norm = normalize_place_name(region)
+
+    try:
+        lat_key = f"{round(float(latitude), 5):.5f}"
+    except (TypeError, ValueError):
+        lat_key = ""
+    try:
+        lon_key = f"{round(float(longitude), 5):.5f}"
+    except (TypeError, ValueError):
+        lon_key = ""
+
+    key = f"{settlement_norm}|{district_norm}|{region_norm}|{lat_key}|{lon_key}"
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+    return f"gaz_{digest}"
+
+
+def ensure_gazetteer_ids(gazetteer_df: pd.DataFrame, column_map: dict[str, str | None] | None = None) -> pd.DataFrame:
+    """Return a copy of the gazetteer with a stable "gazetteer_id" column.
+
+    If the upload already has an ID column (detected via the "gazetteer_id"
+    alias group), rows with a blank value are backfilled with a generated ID
+    rather than replacing existing IDs, so partner-provided codes are kept.
+    """
+    if gazetteer_df is None or gazetteer_df.empty:
+        return gazetteer_df
+
+    df = gazetteer_df.copy()
+    columns = column_map if column_map is not None else detect_column_map(df)
+    settlement_col = columns.get("settlement")
+    district_col = columns.get("district")
+    region_col = columns.get("region")
+    lat_col = columns.get("latitude")
+    lon_col = columns.get("longitude")
+    id_col = columns.get("gazetteer_id")
+
+    if id_col and id_col != "gazetteer_id":
+        df = df.rename(columns={id_col: "gazetteer_id"})
+    elif not id_col:
+        df["gazetteer_id"] = ""
+
+    missing_mask = df["gazetteer_id"].isna() | (df["gazetteer_id"].astype(str).str.strip() == "")
+    if missing_mask.any():
+        df.loc[missing_mask, "gazetteer_id"] = df.loc[missing_mask].apply(
+            lambda row: generate_gazetteer_id(
+                row.get(settlement_col) if settlement_col else None,
+                row.get(district_col) if district_col else None,
+                row.get(region_col) if region_col else None,
+                row.get(lat_col) if lat_col else None,
+                row.get(lon_col) if lon_col else None,
+            ),
+            axis=1,
+        )
+
+    return df
 
 
 def coerce_numeric(series: pd.Series | None) -> pd.Series:
