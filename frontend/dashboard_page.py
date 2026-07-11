@@ -15,6 +15,15 @@ import streamlit.components.v1 as components
 from backend.alias_repository import get_connection
 from backend.audit_logger import export_audit_csv, export_audit_excel
 from backend.confidence_scorer import ADMIN_CONTRADICTION_THRESHOLD
+from backend.db_backup import (
+    AliasImportError,
+    export_approved_aliases,
+    export_database_backup,
+    export_rejected_matches,
+    export_review_history,
+    import_aliases_from_dataframe,
+    import_database_backup,
+)
 from backend.excel_exporter import export_all_excel_outputs
 from backend.geocoder import apply_geocodes, normalize_review_statuses
 from backend.gis_exporter import export_gis_outputs
@@ -33,6 +42,7 @@ from config import (
     STATIC_DIR,
     STATUS_COLORS,
     SUPPORTED_SPATIAL_EXTENSIONS,
+    UPLOADS_DIR,
 )
 
 
@@ -1265,6 +1275,70 @@ def _outputs_panel() -> None:
             )
 
 
+def _database_management_panel() -> None:
+    with st.expander("Place Intelligence Database — Backup & Import", expanded=False):
+        st.caption(
+            "Export the local approved-alias/review history for backup or sharing, or import a "
+            "previous backup or a partner-supplied alias list. Imports merge with existing history "
+            "and never silently overwrite it."
+        )
+
+        export_col1, export_col2, export_col3, export_col4 = st.columns(4)
+        conn = get_connection()
+        try:
+            with export_col1:
+                if st.button("Export Approved Aliases", use_container_width=True, key="export_aliases_btn"):
+                    st.session_state.db_export_path = str(export_approved_aliases(conn, fmt="csv"))
+            with export_col2:
+                if st.button("Export Review History", use_container_width=True, key="export_reviews_btn"):
+                    st.session_state.db_export_path = str(export_review_history(conn, fmt="csv"))
+            with export_col3:
+                if st.button("Export Rejected Matches", use_container_width=True, key="export_rejected_btn"):
+                    st.session_state.db_export_path = str(export_rejected_matches(conn, fmt="csv"))
+            with export_col4:
+                if st.button("Backup Full Database", use_container_width=True, key="export_backup_btn"):
+                    st.session_state.db_export_path = str(export_database_backup())
+        finally:
+            conn.close()
+
+        export_path = st.session_state.get("db_export_path")
+        if export_path and Path(export_path).exists():
+            file_path = Path(export_path)
+            st.download_button(
+                f"Download {file_path.name}",
+                data=_download_bytes(file_path),
+                file_name=file_path.name,
+                use_container_width=True,
+                key=f"download_db_{file_path.name}",
+            )
+
+        st.markdown("---")
+        st.markdown("**Import**")
+        import_file = st.file_uploader(
+            "Approved alias list (CSV/Excel) or a full database backup (.db)",
+            type=["csv", "xlsx", "xls", "db"],
+            key="alias_import_uploader",
+        )
+        if import_file is not None and st.button("Import", key="import_alias_btn"):
+            conn = get_connection()
+            try:
+                if import_file.name.lower().endswith(".db"):
+                    temp_path = UPLOADS_DIR / import_file.name
+                    temp_path.write_bytes(import_file.getvalue())
+                    try:
+                        result = import_database_backup(conn, temp_path)
+                    finally:
+                        temp_path.unlink(missing_ok=True)
+                else:
+                    import_df = read_tabular_file(import_file, add_row_ids=False)
+                    result = import_aliases_from_dataframe(conn, import_df)
+                st.success(f"Imported {result['imported']} alias record(s), skipped {result['skipped']}.")
+            except (AliasImportError, DataLoadError) as error:
+                st.error(f"Import failed: {error}")
+            finally:
+                conn.close()
+
+
 def _local_notice() -> None:
     _html(
         """
@@ -1298,5 +1372,7 @@ def render() -> None:
         _outputs_panel()
 
     _map_panel()
+
+    _database_management_panel()
 
     _local_notice()
