@@ -12,6 +12,8 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+from backend.alias_repository import get_connection
+from backend.audit_logger import export_audit_csv, export_audit_excel
 from backend.confidence_scorer import ADMIN_CONTRADICTION_THRESHOLD
 from backend.excel_exporter import export_all_excel_outputs
 from backend.geocoder import apply_geocodes, normalize_review_statuses
@@ -19,6 +21,7 @@ from backend.gis_exporter import export_gis_outputs
 from backend.load_data import DataLoadError, load_sample_datasets, read_spatial_file, read_tabular_file
 from backend.map_generator import create_response_map
 from backend.qa_report import export_qa_excel_report, export_qa_pdf_report
+from backend.review_repository import list_review_decisions
 from backend.settlement_matcher import match_records, matching_statistics
 from backend.utils import detect_column_map, output_path, safe_percent
 from backend.validate_data import validate_response_data
@@ -42,10 +45,13 @@ OUTPUT_ITEMS = [
     ("GeoJSON", "GeoJSON", "Web GIS format"),
     ("QA Excel Report", "QA Excel Report", "Detailed QA workbook"),
     ("QA / Matching Report", "QA PDF Report", "Matched, unmatched, stats"),
+    ("Audit Log (CSV)", "Audit Log CSV", "Full matching + review audit trail"),
+    ("Audit Log (Excel)", "Audit Log Excel", "Full matching + review audit trail"),
 ]
 OUTPUT_TITLES = [title for title, _, _ in OUTPUT_ITEMS]
 OUTPUT_KEY_BY_TITLE = {title: key for title, key, _ in OUTPUT_ITEMS}
 EXCEL_OUTPUT_KEYS = {"Cleaned Excel", "District Workbook", "District Summary"}
+AUDIT_OUTPUT_KEYS = {"Audit Log CSV", "Audit Log Excel"}
 GIS_OUTPUT_KEYS = {"Shapefile ZIP", "GeoPackage", "GeoJSON"}
 DASHBOARD_MAP_HEIGHT = 880
 
@@ -444,6 +450,30 @@ def _generate_outputs() -> None:
                 )
             },
         )
+
+    audit_keys = selected_keys & AUDIT_OUTPUT_KEYS
+    if audit_keys:
+        def _generate_audit_outputs() -> dict[str, str]:
+            conn = get_connection()
+            try:
+                review_decisions_df = list_review_decisions(conn)
+            finally:
+                conn.close()
+            matches_df = st.session_state.get("match_df")
+            semantic_used = bool(st.session_state.get("use_semantic", False))
+            ollama_used = bool(st.session_state.get("use_ollama", False))
+            result: dict[str, str] = {}
+            if "Audit Log CSV" in audit_keys:
+                result["Audit Log CSV"] = str(
+                    export_audit_csv(matches_df, review_decisions_df, semantic_used, ollama_used)
+                )
+            if "Audit Log Excel" in audit_keys:
+                result["Audit Log Excel"] = str(
+                    export_audit_excel(matches_df, review_decisions_df, semantic_used, ollama_used)
+                )
+            return result
+
+        run_stage("Audit Log", _generate_audit_outputs)
 
     elapsed = time.perf_counter() - started
     outputs["Log File"] = _write_log(outputs, elapsed, stage_timings)
