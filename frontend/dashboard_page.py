@@ -280,7 +280,11 @@ def _run_matching() -> None:
 
     started = time.perf_counter()
     st.session_state.match_df = match_records(
-        response_df, gazetteer_df, use_semantic=use_semantic, use_ollama=use_ollama
+        response_df,
+        gazetteer_df,
+        use_semantic=use_semantic,
+        use_ollama=use_ollama,
+        boundary_gdf=st.session_state.get("boundary_gdf"),
     )
     st.session_state.processing_seconds = time.perf_counter() - started
     st.session_state.processed_df = pd.DataFrame()
