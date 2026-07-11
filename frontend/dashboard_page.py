@@ -279,13 +279,15 @@ def _run_matching() -> None:
         use_ollama = False
 
     started = time.perf_counter()
-    st.session_state.match_df = match_records(
+    matches_df, candidates_by_record = match_records(
         response_df,
         gazetteer_df,
         use_semantic=use_semantic,
         use_ollama=use_ollama,
         boundary_gdf=st.session_state.get("boundary_gdf"),
     )
+    st.session_state.match_df = matches_df
+    st.session_state.match_candidates = candidates_by_record
     st.session_state.processing_seconds = time.perf_counter() - started
     st.session_state.processed_df = pd.DataFrame()
     st.session_state.matching_warnings = warnings
@@ -823,6 +825,119 @@ def _review_queue_editor(matches_df: pd.DataFrame) -> pd.DataFrame:
     return _merge_reviewed_matches(matches_df, edited_subset)
 
 
+def apply_candidate_selection(
+    matches_df: pd.DataFrame, record_id: int, chosen_candidate: dict[str, object]
+) -> pd.DataFrame:
+    """Overwrite a match row's suggestion with a manually-selected alternate candidate.
+
+    Marks the row accepted (matching_method "manual_selection") so the
+    analyst's explicit choice - not the pipeline's original top pick - is
+    what gets written to processed_df and taught back to the alias table
+    when they save.
+    """
+    matches_df = matches_df.copy()
+    idx = matches_df.index[matches_df["record_id"] == record_id][0]
+    matches_df.loc[idx, "suggested_settlement"] = chosen_candidate["settlement"]
+    matches_df.loc[idx, "suggested_district"] = chosen_candidate["district"]
+    matches_df.loc[idx, "suggested_region"] = chosen_candidate["region"]
+    matches_df.loc[idx, "latitude"] = chosen_candidate["latitude"]
+    matches_df.loc[idx, "longitude"] = chosen_candidate["longitude"]
+    matches_df.loc[idx, "suggested_gazetteer_id"] = chosen_candidate["gazetteer_id"]
+    matches_df.loc[idx, "official_district"] = chosen_candidate["district"]
+    matches_df.loc[idx, "official_region"] = chosen_candidate["region"]
+    matches_df.loc[idx, "official_latitude"] = chosen_candidate["latitude"]
+    matches_df.loc[idx, "official_longitude"] = chosen_candidate["longitude"]
+    matches_df.loc[idx, "confidence"] = chosen_candidate["overall_confidence"]
+    matches_df.loc[idx, "overall_confidence"] = chosen_candidate["overall_confidence"]
+    matches_df.loc[idx, "matching_method"] = "manual_selection"
+    matches_df.loc[idx, "candidate_rank"] = chosen_candidate["rank"]
+    matches_df.loc[idx, "accept"] = True
+    matches_df.loc[idx, "reject"] = False
+    matches_df.loc[idx, "status"] = "accepted"
+    matches_df.loc[idx, "decision_status"] = "accepted"
+    return matches_df
+
+
+def _candidate_comparison_panel(matches_df: pd.DataFrame) -> pd.DataFrame:
+    """Let a reviewer inspect the full ranked candidate shortlist for a record
+    (not just the single top suggestion) and pick a different one if it's wrong."""
+    candidates_by_record = st.session_state.get("match_candidates", {})
+    if matches_df.empty or not candidates_by_record:
+        return matches_df
+
+    status_lower = matches_df["status"].astype(str).str.lower()
+    review_subset = matches_df.loc[status_lower.isin({"needs_review", "unresolved"})]
+    reviewable_ids = [rid for rid in review_subset["record_id"].tolist() if rid in candidates_by_record]
+    if not reviewable_ids:
+        return matches_df
+
+    st.markdown("**Compare Candidates**")
+    st.caption(
+        "Inspect the top alternatives the pipeline considered for a specific record, "
+        "and select a different one if the top suggestion looks wrong."
+    )
+
+    def _record_label(record_id: int) -> str:
+        submitted = matches_df.loc[matches_df["record_id"] == record_id, "submitted_settlement"].iloc[0]
+        return f"Row {record_id}: {submitted}"
+
+    selected_id = st.selectbox(
+        "Record to compare",
+        options=reviewable_ids,
+        format_func=_record_label,
+        key="candidate_comparison_record",
+    )
+
+    candidates = candidates_by_record.get(selected_id, [])
+    if not candidates:
+        st.caption("No alternative candidates were found for this record.")
+        return matches_df
+
+    comparison_df = pd.DataFrame(candidates)
+    display_columns = {
+        "rank": "Rank",
+        "settlement": "Settlement",
+        "district": "District",
+        "region": "Region",
+        "name_score": "Name %",
+        "semantic_score": "Semantic %",
+        "spatial_score": "Spatial %",
+        "historical_score": "Historical %",
+        "distance_km": "Distance (km)",
+        "overall_confidence": "Confidence %",
+        "admin_conflict": "Admin Conflict",
+    }
+    available_columns = [column for column in display_columns if column in comparison_df.columns]
+    st.dataframe(
+        comparison_df[available_columns].rename(columns=display_columns),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    candidate_by_rank = {candidate["rank"]: candidate for candidate in candidates}
+
+    def _candidate_label(rank: int) -> str:
+        candidate = candidate_by_rank[rank]
+        district = candidate["district"] or "unknown district"
+        return f"#{rank}: {candidate['settlement']} ({district})"
+
+    chosen_rank = st.selectbox(
+        "Select a candidate to use instead",
+        options=list(candidate_by_rank.keys()),
+        format_func=_candidate_label,
+        key="candidate_comparison_choice",
+    )
+
+    if st.button("Use This Candidate", key="use_candidate_button"):
+        chosen = candidate_by_rank[chosen_rank]
+        matches_df = apply_candidate_selection(matches_df, selected_id, chosen)
+        st.session_state.match_df = matches_df
+        st.success(f"Row {selected_id} updated to use candidate #{chosen_rank}: {chosen['settlement']}.")
+        st.rerun()
+
+    return matches_df
+
+
 def _matching_panel() -> None:
     matches_df = st.session_state.get("match_df", pd.DataFrame())
     stats = matching_statistics(matches_df)
@@ -879,6 +994,7 @@ def _matching_panel() -> None:
         st.warning(warning_message)
 
     matches_df = _review_queue_editor(matches_df)
+    matches_df = _candidate_comparison_panel(matches_df)
     st.session_state.match_df = matches_df
 
     c1, c2 = st.columns([1, 1])

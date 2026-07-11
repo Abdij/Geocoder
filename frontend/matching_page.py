@@ -45,7 +45,7 @@ def render() -> None:
 
         try:
             with st.spinner("Matching settlements against gazetteer..."):
-                matches_df = match_records(
+                matches_df, candidates_by_record = match_records(
                     response_df,
                     gazetteer_df,
                     use_semantic=use_semantic,
@@ -54,6 +54,7 @@ def render() -> None:
                 )
             elapsed = time.perf_counter() - started
             st.session_state.match_df = matches_df
+            st.session_state.match_candidates = candidates_by_record
             st.session_state.processing_seconds = elapsed
             st.session_state.processed_df = pd.DataFrame()
             progress.progress(1.0)

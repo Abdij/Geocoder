@@ -247,13 +247,13 @@ def _build_match_row(
     gazetteer_embeddings,
     use_ollama: bool,
     ollama_cache: OllamaCache,
-) -> dict[str, object]:
+) -> tuple[dict[str, object], list[dict[str, object]]]:
     normalized_submitted_settlement = normalize_place_name(submitted_settlement)
     if not normalized_submitted_settlement:
         return _empty_row(
             record_id, source_row, submitted_settlement, submitted_district, submitted_region,
             submitted_latitude, submitted_longitude, run_id, "Settlement name is missing.",
-        )
+        ), []
 
     submitted_district_norm = normalize_place_name(submitted_district)
     submitted_region_norm = normalize_place_name(submitted_region)
@@ -279,7 +279,7 @@ def _build_match_row(
         return _empty_row(
             record_id, source_row, submitted_settlement, submitted_district, submitted_region,
             submitted_latitude, submitted_longitude, run_id, "No viable gazetteer candidate was found.",
-        )
+        ), []
 
     scored = [
         (
@@ -328,6 +328,35 @@ def _build_match_row(
     if safety.blocked_reasons:
         reason += f" Held for review: {', '.join(safety.blocked_reasons)}."
 
+    # Shared candidate comparison list - used both as the Ollama evidence
+    # payload below and returned to the caller so the review UI can show a
+    # real top-5 comparison instead of just the single winning candidate.
+    candidate_list = [
+        {
+            "rank": c.rank,
+            "gazetteer_id": c.gazetteer_id,
+            "settlement": c.settlement,
+            "district": c.district,
+            "region": c.region,
+            "latitude": c.latitude,
+            "longitude": c.longitude,
+            "matching_method": c.matching_method,
+            "name_score": c.name_score,
+            "semantic_score": conf.semantic_score,
+            "spatial_score": conf.spatial_score,
+            "historical_score": conf.historical_score,
+            "distance_km": spatial_ev.distance_km,
+            "overall_confidence": conf.overall_confidence,
+            "approval_count": approvals,
+            "rejection_count": rejections,
+            "admin_conflict": (
+                (conf.district_score is not None and conf.district_score < ADMIN_CONTRADICTION_THRESHOLD)
+                or (conf.region_score is not None and conf.region_score < ADMIN_CONTRADICTION_THRESHOLD)
+            ),
+        }
+        for c, conf, spatial_ev, approvals, rejections in scored
+    ]
+
     llm_note = None
     if use_ollama and safety.status == "needs_review":
         cache_key = (
@@ -339,36 +368,19 @@ def _build_match_row(
         if cache_key in ollama_cache:
             llm_note = ollama_cache[cache_key]
         else:
-            candidate_payload = [
-                {
-                    "settlement": c.settlement,
-                    "district": c.district,
-                    "region": c.region,
-                    "name_score": c.name_score,
-                    "semantic_score": c.semantic_score,
-                    "distance_km": spatial_ev.distance_km,
-                    "approval_count": approvals,
-                    "rejection_count": rejections,
-                    "admin_conflict": (
-                        (conf.district_score is not None and conf.district_score < ADMIN_CONTRADICTION_THRESHOLD)
-                        or (conf.region_score is not None and conf.region_score < ADMIN_CONTRADICTION_THRESHOLD)
-                    ),
-                }
-                for c, conf, spatial_ev, approvals, rejections in scored
-            ]
             llm_note = request_reasoning_note(
                 submitted_settlement=submitted_settlement,
                 submitted_district=submitted_district,
                 submitted_region=submitted_region,
                 submitted_latitude=submitted_latitude,
                 submitted_longitude=submitted_longitude,
-                candidates=candidate_payload,
+                candidates=candidate_list,
             )
             ollama_cache[cache_key] = llm_note
         if llm_note:
             reason = f"{reason} Local AI note: {llm_note}"
 
-    return {
+    row = {
         "record_id": record_id,
         "source_row": source_row,
         "submitted_settlement": submitted_settlement,
@@ -407,6 +419,7 @@ def _build_match_row(
         "reviewer": None,
         "reviewed_at": None,
     }
+    return row, candidate_list
 
 
 def match_records(
@@ -416,13 +429,20 @@ def match_records(
     use_ollama: bool = False,
     progress_callback: ProgressCallback | None = None,
     boundary_gdf=None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, dict[int, list[dict[str, object]]]]:
+    """Match response records missing coordinates against the gazetteer.
+
+    Returns (matches_df, candidates_by_record): candidates_by_record maps
+    each matched record_id to its full ranked candidate shortlist (not just
+    the winner in matches_df), so the review UI can show a real top-N
+    comparison instead of only the single suggestion.
+    """
     response_columns = detect_column_map(response_df)
     prepared = _prepare_gazetteer(gazetteer_df)
 
     required_gazetteer = ["settlement", "latitude", "longitude"]
     if any(not prepared.columns.get(field) for field in required_gazetteer):
-        return _empty_matches()
+        return _empty_matches(), {}
 
     missing_mask, invalid_mask, _ = coordinate_masks(
         response_df,
@@ -431,7 +451,7 @@ def match_records(
     )
     records_to_match = response_df[missing_mask | invalid_mask].copy()
     if records_to_match.empty:
-        return _empty_matches()
+        return _empty_matches(), {}
 
     settlement_col = response_columns.get("settlement")
     district_col = response_columns.get("district")
@@ -467,6 +487,7 @@ def match_records(
     conn = get_connection()
     try:
         matches = []
+        candidates_by_record: dict[int, list[dict[str, object]]] = {}
         for position, (record_id, row) in enumerate(records_to_match.iterrows(), start=1):
             submitted_settlement = row.get(settlement_col, "") if settlement_col else ""
             submitted_district = row.get(district_col, "") if district_col else ""
@@ -482,30 +503,31 @@ def match_records(
             if progress_callback:
                 progress_callback(position, total, f"Matching {submitted_settlement or 'record'}")
 
-            matches.append(
-                _build_match_row(
-                    record_id=int(record_id),
-                    source_row=source_row,
-                    run_id=run_id,
-                    submitted_settlement=submitted_settlement,
-                    submitted_district=submitted_district,
-                    submitted_region=submitted_region,
-                    submitted_latitude=submitted_latitude,
-                    submitted_longitude=submitted_longitude,
-                    prepared=prepared,
-                    conn=conn,
-                    boundary_gdf=boundary_gdf,
-                    boundary_district_column=boundary_district_column,
-                    semantic_model=semantic_model,
-                    gazetteer_embeddings=gazetteer_embeddings,
-                    use_ollama=use_ollama,
-                    ollama_cache=ollama_cache,
-                )
+            match_row, candidate_list = _build_match_row(
+                record_id=int(record_id),
+                source_row=source_row,
+                run_id=run_id,
+                submitted_settlement=submitted_settlement,
+                submitted_district=submitted_district,
+                submitted_region=submitted_region,
+                submitted_latitude=submitted_latitude,
+                submitted_longitude=submitted_longitude,
+                prepared=prepared,
+                conn=conn,
+                boundary_gdf=boundary_gdf,
+                boundary_district_column=boundary_district_column,
+                semantic_model=semantic_model,
+                gazetteer_embeddings=gazetteer_embeddings,
+                use_ollama=use_ollama,
+                ollama_cache=ollama_cache,
             )
+            matches.append(match_row)
+            if candidate_list:
+                candidates_by_record[int(record_id)] = candidate_list
     finally:
         conn.close()
 
-    return pd.DataFrame(matches, columns=MATCH_COLUMNS)
+    return pd.DataFrame(matches, columns=MATCH_COLUMNS), candidates_by_record
 
 
 def matching_statistics(matches_df: pd.DataFrame) -> dict[str, int | float]:
