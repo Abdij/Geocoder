@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import pandas as pd
 
+from backend.confidence_scorer import ADMIN_CONTRADICTION_THRESHOLD
 from backend.utils import coerce_numeric, detect_column_map
-from config import STATUS_COLORS
+from config import MAX_AUTO_ACCEPT_DISTANCE_KM, STATUS_COLORS
 
 # Leaflet core and the folium plugins used below (Fullscreen, MarkerCluster, MeasureControl,
 # MiniMap, MousePosition) normally load their JS/CSS from public CDNs. Machines without internet
@@ -184,6 +185,7 @@ def create_response_map(processed_df: pd.DataFrame, boundary_gdf=None, matches_d
 
     if matches_df is not None and not matches_df.empty:
         review_layer = folium.FeatureGroup(name="Review candidates", show=True)
+        submitted_layer = folium.FeatureGroup(name="Submitted coordinates + distance", show=False)
         for _, match in matches_df.iterrows():
             lat = pd.to_numeric(pd.Series([match.get("latitude")]), errors="coerce").iloc[0]
             lon = pd.to_numeric(pd.Series([match.get("longitude")]), errors="coerce").iloc[0]
@@ -192,25 +194,84 @@ def create_response_map(processed_df: pd.DataFrame, boundary_gdf=None, matches_d
             status = str(match.get("status", "needs_review")).lower()
             if status not in {"needs_review", "unresolved", "rejected"}:
                 continue
-            color = STATUS_COLORS.get(status, "#FFB900")
-            popup = (
-                f"<b>{match.get('submitted_settlement', 'Submitted settlement')}</b><br>"
-                f"Suggested: {match.get('suggested_settlement', '')}<br>"
-                f"District: {match.get('suggested_district', '')}<br>"
-                f"Confidence: {match.get('confidence', '')}<br>"
-                f"Status: {status.replace('_', ' ').title()}"
+
+            district_score = pd.to_numeric(pd.Series([match.get("district_score")]), errors="coerce").iloc[0]
+            region_score = pd.to_numeric(pd.Series([match.get("region_score")]), errors="coerce").iloc[0]
+            distance_km = pd.to_numeric(pd.Series([match.get("distance_km")]), errors="coerce").iloc[0]
+            admin_conflict = (pd.notna(district_score) and district_score < ADMIN_CONTRADICTION_THRESHOLD) or (
+                pd.notna(region_score) and region_score < ADMIN_CONTRADICTION_THRESHOLD
             )
+            spatial_conflict = pd.notna(distance_km) and distance_km > MAX_AUTO_ACCEPT_DISTANCE_KM
+
+            color = STATUS_COLORS.get(status, "#FFB900")
+            conflict_labels = []
+            if admin_conflict:
+                conflict_labels.append("Administrative conflict")
+            if spatial_conflict:
+                conflict_labels.append("Spatial conflict")
+            # A dashed, thicker ring distinguishes a flagged conflict from a
+            # plain low-confidence match at a glance, without needing a
+            # whole separate color scale.
+            marker_weight = 5 if conflict_labels else 3
+            dash_array = "4,3" if conflict_labels else None
+
+            popup_lines = [
+                f"<b>{match.get('submitted_settlement', 'Submitted settlement')}</b>",
+                f"Suggested: {match.get('suggested_settlement', '')}",
+                f"District: {match.get('suggested_district', '')}",
+                f"Confidence: {match.get('confidence', '')}",
+                f"Status: {status.replace('_', ' ').title()}",
+            ]
+            if conflict_labels:
+                popup_lines.append(f"⚠ {', '.join(conflict_labels)}")
+            if pd.notna(distance_km):
+                popup_lines.append(f"Distance from submitted point: {distance_km:.1f} km")
+
             folium.CircleMarker(
                 location=[float(lat), float(lon)],
                 radius=8,
                 color=color,
-                weight=3,
+                weight=marker_weight,
+                dash_array=dash_array,
                 fill=True,
                 fill_color="#ffffff",
                 fill_opacity=0.65,
-                popup=folium.Popup(popup, max_width=320),
+                popup=folium.Popup("<br>".join(popup_lines), max_width=320),
             ).add_to(review_layer)
+
+            # The submitted coordinate is only meaningful for records that
+            # had an invalid (not merely missing) GPS value - draw it plus a
+            # line to the suggested candidate so a reviewer can see how far
+            # off the original point was.
+            submitted_lat = pd.to_numeric(pd.Series([match.get("submitted_latitude")]), errors="coerce").iloc[0]
+            submitted_lon = pd.to_numeric(pd.Series([match.get("submitted_longitude")]), errors="coerce").iloc[0]
+            if pd.notna(submitted_lat) and pd.notna(submitted_lon):
+                folium.CircleMarker(
+                    location=[float(submitted_lat), float(submitted_lon)],
+                    radius=5,
+                    color="#605E5C",
+                    fill=True,
+                    fill_color="#605E5C",
+                    fill_opacity=0.85,
+                    popup=folium.Popup(
+                        f"Submitted coordinate for {match.get('submitted_settlement', '')}"
+                        f"<br>({float(submitted_lat):.5f}, {float(submitted_lon):.5f})",
+                        max_width=260,
+                    ),
+                ).add_to(submitted_layer)
+                line_tooltip = (
+                    f"{distance_km:.1f} km to suggested candidate" if pd.notna(distance_km) else "Distance unavailable"
+                )
+                folium.PolyLine(
+                    locations=[[float(submitted_lat), float(submitted_lon)], [float(lat), float(lon)]],
+                    color="#605E5C",
+                    weight=2,
+                    dash_array="6,6",
+                    tooltip=line_tooltip,
+                ).add_to(submitted_layer)
+
         review_layer.add_to(response_map)
+        submitted_layer.add_to(response_map)
 
     legend_items = [
         ("Auto accepted", STATUS_COLORS.get("auto_accepted", "#107C10")),

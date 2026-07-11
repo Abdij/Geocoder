@@ -12,6 +12,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+from backend.confidence_scorer import ADMIN_CONTRADICTION_THRESHOLD
 from backend.excel_exporter import export_all_excel_outputs
 from backend.geocoder import apply_geocodes, normalize_review_statuses
 from backend.gis_exporter import export_gis_outputs
@@ -21,7 +22,15 @@ from backend.qa_report import export_qa_excel_report, export_qa_pdf_report
 from backend.settlement_matcher import match_records, matching_statistics
 from backend.utils import detect_column_map, output_path, safe_percent
 from backend.validate_data import validate_response_data
-from config import APP_NAME, APP_TAGLINE, ASSETS_DIR, STATIC_DIR, STATUS_COLORS, SUPPORTED_SPATIAL_EXTENSIONS
+from config import (
+    APP_NAME,
+    APP_TAGLINE,
+    ASSETS_DIR,
+    MAX_AUTO_ACCEPT_DISTANCE_KM,
+    STATIC_DIR,
+    STATUS_COLORS,
+    SUPPORTED_SPATIAL_EXTENSIONS,
+)
 
 
 OUTPUT_ITEMS = [
@@ -1081,6 +1090,17 @@ def _map_legend_items(processed_df: pd.DataFrame, matches_df: pd.DataFrame | Non
     return [(status.replace("_", " ").title(), seen[status]) for status in ordered_statuses]
 
 
+def _map_has_flagged_conflict(matches_df: pd.DataFrame | None) -> bool:
+    if matches_df is None or matches_df.empty:
+        return False
+    district_score = pd.to_numeric(matches_df.get("district_score"), errors="coerce")
+    region_score = pd.to_numeric(matches_df.get("region_score"), errors="coerce")
+    distance_km = pd.to_numeric(matches_df.get("distance_km"), errors="coerce")
+    admin_conflict = (district_score < ADMIN_CONTRADICTION_THRESHOLD) | (region_score < ADMIN_CONTRADICTION_THRESHOLD)
+    spatial_conflict = distance_km > MAX_AUTO_ACCEPT_DISTANCE_KM
+    return bool((admin_conflict.fillna(False) | spatial_conflict.fillna(False)).any())
+
+
 def _map_legend_html(processed_df: pd.DataFrame, matches_df: pd.DataFrame | None) -> str:
     items = _map_legend_items(processed_df, matches_df)
     if not items:
@@ -1088,7 +1108,13 @@ def _map_legend_html(processed_df: pd.DataFrame, matches_df: pd.DataFrame | None
     swatches = "".join(
         f'<span><i class="dot" style="background:{color};"></i>{_e(label)}</span>' for label, color in items
     )
-    return f'<div class="map-legend">{swatches}</div>'
+    conflict_note = (
+        '<span><i class="dot" style="background:transparent;border:2px dashed #667085;"></i>'
+        "Dashed ring = administrative or spatial conflict flagged</span>"
+        if _map_has_flagged_conflict(matches_df)
+        else ""
+    )
+    return f'<div class="map-legend">{swatches}{conflict_note}</div>'
 
 
 def _map_panel() -> None:
