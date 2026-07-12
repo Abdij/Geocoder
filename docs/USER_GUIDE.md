@@ -92,46 +92,69 @@ Click **Run Settlement Matching** (in the sidebar, or the button of the same nam
 
 ### How matching works, in order
 
-1. **Exact match** — normalized settlement name matches the gazetteer exactly.
-2. **RapidFuzz fuzzy match** *(always on)* — scores the closest gazetteer candidates by text similarity, narrowed first by district/region when available.
-3. **Semantic matching** *(optional toggle)* — uses a local Sentence Transformers embedding model (`all-MiniLM-L6-v2`) to catch names that are worded differently but mean the same place. Adds a moment of processing time the first time it runs (it downloads the model once).
-4. **Ollama reasoning notes** *(optional toggle)* — for any match that lands in "needs review," asks a local Ollama LLM (`qwen2.5`) for a one-line, plain-English reason. Requires Ollama installed and running on the same machine (`ollama serve`) — if it isn't reachable, the app shows a warning and simply skips this step rather than failing.
+1. **Approved alias** — if an analyst has previously confirmed this exact submitted name/district/region maps to a specific gazetteer entry, that confirmed answer is used first.
+2. **Exact match** — normalized settlement name matches the gazetteer exactly (tried with district+region, then district alone, then region alone, then nationally if the name is unique gazetteer-wide).
+3. **RapidFuzz fuzzy match** *(always on)* — scores the closest gazetteer candidates by text similarity (district-constrained first, then region, then national), keeping the top 5 for comparison rather than stopping at the first hit.
+4. **Semantic matching** *(optional toggle)* — uses a local Sentence Transformers embedding model (`all-MiniLM-L6-v2`) to re-rank that fuzzy shortlist by meaning, catching names worded differently but meaning the same place. Adds a moment of processing time the first time it runs (it downloads the model once).
+5. **Ollama reasoning notes** *(optional toggle)* — for any match that lands in "needs review," asks a local Ollama LLM (`qwen2.5`) for a short, plain-English note on which candidate looks most plausible and why. Purely advisory — it never changes the score or decision itself. Requires Ollama installed and running on the same machine (`ollama serve`) — if it isn't reachable, the app shows a warning and simply skips this step rather than failing.
 
 Both AI toggles are **off by default** and layer on top of RapidFuzz — they never replace it. If a toggle is on but its dependency isn't installed or reachable, the app warns you and continues with RapidFuzz-only matching so a run never fails outright.
 
 ### Confidence scoring and status
 
-Every candidate match gets a confidence score (0–100%), weighted as:
+Every candidate gets a confidence score (0–100%) from up to six components. If one is unavailable (e.g. no submitted coordinate to check distance against), its weight shifts proportionally to whichever components are available — missing evidence is never scored as good or bad.
 
 | Component | Weight |
 |---|---|
-| Settlement name similarity | 50% |
-| District similarity | 25% |
-| Region similarity | 15% |
-| Administrative consistency (do district/region actually pair up in the gazetteer?) | 10% |
+| Settlement name similarity | 35% |
+| District consistency | 20% |
+| Region consistency | 10% |
+| Spatial consistency (distance) | 15% |
+| Historical evidence (prior approvals) | 10% |
+| Semantic similarity | 10% |
 
 | Confidence | Status | What happens |
 |---|---|---|
-| **90–100%** | 🟢 Auto Matched | Coordinates are applied automatically. |
-| **75–89%** | 🟠 Needs Review | Flagged for manual follow-up — see Step 4 below. |
-| **Below 75%** | 🔴 Unmatched | No confident candidate was found. |
+| **95–100%** | 🟢 Auto Matched | Coordinates are applied automatically — unless a hard safeguard below blocks it. |
+| **85–94.99%** | 🟠 Needs Review | Flagged for manual follow-up — see Step 4 below. |
+| **Below 85%** | 🔴 Unmatched | No confident candidate was found. |
+
+**A high score alone is never enough.** The app refuses to auto-accept — regardless of confidence — when there's a genuine district/region contradiction, the settlement name exists in more than one district with no way to disambiguate it, the candidate is more than 15km from a submitted coordinate, the top two candidates are within 5 points of each other, this exact candidate has been rejected before for this context, or the candidate is missing required district/region data. A blocked match still lands in Needs Review rather than being downgraded further.
 
 The matching table shows submitted settlement/district, the suggested match, confidence, latitude/longitude, and a color-coded pill. The legend below the table (Auto Matched / Needs Review / Unmatched / Manually Edited) always shows current counts.
 
-![Settlement matching table with confidence scores and AI toggles](images/03_matching.png)
+![Needs Review queue, Compare Candidates panel, and outputs preview with the audit log](images/03_matching.png)
 
 ---
 
 ## 7. Step 4 — Review Matches
 
-"Needs Review" and "Unmatched" records are the ones worth your attention — the app deliberately does **not** auto-apply anything below 90% confidence, so a human always has the final say on lower-confidence geocodes.
+"Needs Review" and "Unmatched" records are the ones worth your attention — the app deliberately does **not** auto-apply anything below 95% confidence (or that trips a hard safeguard), so a human always has the final say.
 
-This build of the app doesn't yet include an in-app grid for accepting or overriding individual low-confidence matches row-by-row. In practice, resolve them one of these ways:
+### Needs Review Queue
+
+Every needs-review/unmatched row appears in an editable table directly in the Settlement Matching panel. For each row you can:
+
+- **Accept** the suggested match as-is, or **Reject** it.
+- **Edit** the suggested settlement, district, or coordinates directly if you already know the right answer.
+- Change the **Status** dropdown directly if needed.
+
+### Compare Candidates
+
+Below the queue, pick any needs-review record from the dropdown to see the full ranked shortlist the pipeline considered for it — not just the single top guess:
+
+- Settlement, district, region, and every score component (name/semantic/spatial/historical/confidence) for up to 5 candidates.
+- Distance in km from a submitted coordinate, when one exists.
+- Pick a different candidate from the dropdown and click **Use This Candidate** — this replaces the suggestion, marks the row accepted, and is what gets saved and taught back to the system (not the pipeline's original guess).
+
+When you accept a match — directly, or via Compare Candidates — the app remembers it: next time the same settlement name comes up in the same district/region, it's recognized instantly as an approved alias. Rejecting a candidate is remembered too, and repeatedly rejecting the same suggestion makes the app less confident in recommending it again.
+
+**Still can't resolve a record?**
 
 - **Fix the spelling at the source.** Most "needs review" cases are a spelling or transliteration difference (e.g. "Deynile" vs. "Deeyniile"). Correct the settlement/district name in the response file and re-run matching.
 - **Turn on semantic matching** if you haven't — it often resolves near-miss spellings that RapidFuzz alone scores lower.
-- **Check the QA Excel Report's "Low Confidence" sheet** (generated in Step 5) — it lists every needs-review/unmatched record with its suggested candidate side by side, useful for a bulk manual review pass or handing off to someone with local knowledge.
-- **Source the coordinate manually** (e.g. from the gazetteer, a partner, or a map) and enter it directly into the response file, then re-upload — this is the most reliable fix for genuinely unmatched settlements that aren't in the gazetteer at all.
+- **Check the QA Excel Report's "Low Confidence" sheet** (generated in Step 5) — it lists every needs-review/unmatched record with its suggested candidate side by side.
+- **Source the coordinate manually** and enter it directly into the response file, then re-upload — the most reliable fix for settlements genuinely missing from the gazetteer.
 
 Once you're satisfied with the matches, click **Save Reviewed Matches** and then **Apply Geocodes** (sidebar) to write the accepted coordinates back into the working dataset used for outputs and the map.
 
@@ -141,8 +164,10 @@ Once you're satisfied with the matches, click **Save Reviewed Matches** and then
 
 Below the matching and outputs panels, the **Settlements Preview Map** gives you a full-width, interactive view of every geocoded record:
 
-- **Base layers** — switch between CartoDB Positron (light reference), OpenStreetMap, and Esri Satellite imagery using the layer control (top right).
-- **Overlays** — toggle district boundaries, settlement response records (clustered markers, colored by match status), and review candidates (matches still needing attention) on or off independently.
+- **Base layers** — switch between Light basemap, OpenStreetMap, Satellite imagery, and Topographic using the layer control (top right).
+- **Overlays** — toggle district boundaries, settlement response records (clustered markers, colored by match status), review candidates, and a **submitted coordinates + distance** layer independently.
+- **Submitted-to-candidate lines** — for records with an invalid (not merely missing) GPS value, a dashed line connects the original submitted point to the suggested candidate, labeled with the distance.
+- **Conflict markers** — a review point gets a thicker dashed ring when it has a flagged administrative or spatial conflict, visible at a glance.
 - **Click any marker** for a popup with settlement name, district, match status, and confidence.
 - **Zoom controls** (top left) and normal scroll-wheel/drag zoom and pan, like any GIS viewer.
 - **Fullscreen button** (top left, expand icon) — opens the map to fill the browser window, useful when working with a large or dense dataset.
@@ -150,7 +175,7 @@ Below the matching and outputs panels, the **Settlements Preview Map** gives you
 
 The map updates automatically as you load data, run matching, and apply geocodes — no manual refresh needed.
 
-![Full-width interactive map with satellite imagery and layer control](images/04_map.png)
+![Full-width interactive map with legend, review candidates, and layer control open](images/04_map.png)
 
 ---
 
@@ -168,10 +193,26 @@ Use the **Outputs to generate** multiselect to choose which files you need (all 
 | **GeoJSON** | `.geojson` | Web-GIS-friendly point layer. |
 | **QA Excel Report** | Excel | Readiness metrics, validation issues, full match table, a dedicated "Low Confidence" sheet, and district/cluster summaries. |
 | **QA / Matching Report** | PDF | A shareable summary of matching results and data quality, suitable for a partner or coordination meeting. |
+| **Audit Log (CSV)** | CSV | Every score component, the automatic decision, and any human review decision, reviewer, and note — one row per matched record. |
+| **Audit Log (Excel)** | Excel | Same audit trail as the CSV, in workbook form. |
 
 A processing log (`ocha_processing_log.txt`) and a combined **Download All Outputs** ZIP are generated automatically alongside your selected files. Individual files remain available for one-off download under **Individual files**. Each output card shows **Ready** once generated, or an error message if a stage failed (for example, if GeoPandas isn't installed for the GIS exports).
 
-![Outputs generated and ready to download, with map visible below](images/05_outputs.png)
+![Outputs generated and ready to download, including the new audit log](images/05_outputs.png)
+
+---
+
+## 9a. Place Intelligence Database: Backup & Import
+
+The app learns as you review: accepted matches become approved aliases, and rejections are remembered too, both stored locally in `data/place_intelligence.db`. A panel at the bottom of the dashboard lets you manage that history directly:
+
+- **Export Approved Aliases / Review History / Rejected Matches** — CSV downloads of each table.
+- **Backup Full Database** — a complete copy of the raw database file.
+- **Import** — upload a CSV/Excel alias list or a previous `.db` backup. Files are validated before anything is written, and imports merge with existing history (increasing approval counts on a repeat match) rather than silently overwriting it.
+
+**Hosted deployments:** unless the hosting platform provides persistent storage, this database resets on every restart/redeploy. Export a backup regularly if you're relying on accumulated alias history in a hosted instance.
+
+![Place Intelligence Database panel with export and import controls](images/06_database.png)
 
 ---
 
@@ -210,6 +251,9 @@ Click **Restart Process** in the sidebar. This clears loaded files, matches, and
 **Is any of my data leaving this computer?**
 No. The app has no cloud dependency for its core matching (RapidFuzz and Sentence Transformers both run locally), and Ollama, if used, is also a local process. The header's **Local Mode** badge is a permanent reminder of this.
 
+**A match shows a high score but still landed in Needs Review.**
+One of the hard safeguards tripped — a district/region contradiction, an ambiguous name with no way to disambiguate it, excessive spatial distance, near-tied top candidates, a history of rejection for this exact context, or missing gazetteer metadata. Check Compare Candidates (Step 4) to see why; the safeguard is listed in the row's Reason text.
+
 ---
 
 ## 12. Quick reference
@@ -218,9 +262,9 @@ No. The app has no cloud dependency for its core matching (RapidFuzz and Sentenc
 
 | Range | Status |
 |---|---|
-| 90–100% | Auto Matched |
-| 75–89% | Needs Review |
-| 0–74% | Unmatched |
+| 95–100% | Auto Matched |
+| 85–94.99% | Needs Review |
+| Below 85% | Unmatched |
 
 **Status colors used throughout the app (table pills and map markers)**
 

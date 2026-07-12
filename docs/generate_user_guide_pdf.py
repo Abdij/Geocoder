@@ -338,19 +338,28 @@ def build() -> None:
     elements.append(
         numbered(
             [
-                "<b>Exact match</b> &mdash; normalized settlement name matches the gazetteer exactly.",
-                "<b>RapidFuzz fuzzy match</b> (always on) &mdash; scores the closest gazetteer candidates by text similarity, narrowed by district/region when available.",
-                "<b>Semantic matching</b> (optional toggle) &mdash; a local Sentence Transformers embedding model (all-MiniLM-L6-v2) catches names worded differently but meaning the same place. First run downloads the model once.",
-                "<b>Ollama reasoning notes</b> (optional toggle) &mdash; for “needs review” matches, asks a local Ollama LLM (qwen2.5) for a one-line plain-English reason. Requires Ollama running locally (ollama serve); if unreachable, the app warns and simply skips this step.",
+                "<b>Approved alias</b> &mdash; if an analyst has previously confirmed this exact submitted name/district/region maps to a specific gazetteer entry, that confirmed answer is used first.",
+                "<b>Exact match</b> &mdash; normalized settlement name matches the gazetteer exactly (tried with district+region, then district alone, then region alone, then nationally if the name is unique across the whole gazetteer).",
+                "<b>RapidFuzz fuzzy match</b> (always on) &mdash; scores the closest gazetteer candidates by text similarity (district-constrained first, then region, then national), never stopping at just the first hit &mdash; the top 5 candidates are kept for comparison.",
+                "<b>Semantic matching</b> (optional toggle) &mdash; a local Sentence Transformers embedding model (all-MiniLM-L6-v2) re-ranks that fuzzy shortlist by meaning, catching names worded differently but meaning the same place. First run downloads the model once.",
+                "<b>Ollama reasoning notes</b> (optional toggle) &mdash; for “needs review” matches, asks a local Ollama LLM (qwen2.5) for a short plain-English note on which candidate looks most plausible and why &mdash; advisory only, it never changes the score or decision itself. Requires Ollama running locally (ollama serve); if unreachable, the app warns and simply skips this step.",
             ]
         )
     )
     elements.append(body("Both AI toggles are <b>off by default</b> and layer on top of RapidFuzz &mdash; never replace it. If a toggle is on but its dependency is missing, the app warns you and continues with RapidFuzz-only matching so a run never fails outright."))
     elements.append(h2("Confidence scoring and status"))
+    elements.append(body("Every candidate is scored on up to six components; if one is unavailable (e.g. no submitted coordinate to check distance against), its weight shifts proportionally to whichever components are available &mdash; missing evidence is never scored as good or bad."))
     elements.append(
         styled_table(
             ["Component", "Weight"],
-            [["Settlement name similarity", "50%"], ["District similarity", "25%"], ["Region similarity", "15%"], ["Administrative consistency", "10%"]],
+            [
+                ["Settlement name similarity", "35%"],
+                ["District consistency", "20%"],
+                ["Region consistency", "10%"],
+                ["Spatial consistency (distance)", "15%"],
+                ["Historical evidence (prior approvals)", "10%"],
+                ["Semantic similarity", "10%"],
+            ],
             col_widths=[CONTENT_WIDTH - 100, 100],
         )
     )
@@ -359,27 +368,53 @@ def build() -> None:
         styled_table(
             ["Confidence", "Status", "What happens"],
             [
-                ["90-100%", chip_cell("Auto Matched", "green"), "Coordinates applied automatically."],
-                ["75-89%", chip_cell("Needs Review", "amber"), "Flagged for manual follow-up &mdash; see Step 4."],
-                ["0-74%", chip_cell("Unmatched", "red"), "No confident candidate found."],
+                ["95-100%", chip_cell("Auto Matched", "green"), "Coordinates applied automatically &mdash; unless a hard safeguard below blocks it."],
+                ["85-94.99%", chip_cell("Needs Review", "amber"), "Flagged for manual follow-up &mdash; see Step 4."],
+                ["0-84.99%", chip_cell("Unmatched", "red"), "No confident candidate found."],
             ],
             col_widths=[70, 110, CONTENT_WIDTH - 70 - 110],
         )
     )
-    elements.append(screenshot("03_matching.png", "Matching table with confidence scores, AI toggles, and outputs preview"))
+    elements.append(
+        callout(
+            "A high score alone is never enough:",
+            "the app refuses to auto-accept &mdash; regardless of confidence &mdash; when there's a genuine district/region contradiction, the settlement name exists in more than one district with no way to tell them apart, the candidate is more than 15km from a submitted coordinate, the top two candidates are within 5 points of each other, this exact candidate has been rejected before for this context, or the candidate is missing required district/region data. A blocked match still lands in Needs Review rather than being downgraded further, so nothing is lost &mdash; it just isn't auto-applied.",
+            AMBER,
+        )
+    )
+    elements.append(screenshot("03_matching.png", "Needs Review queue, Compare Candidates panel, and outputs preview with the audit log"))
     elements.append(PageBreak())
 
     # --- Step 4 ---
     elements.append(h1("Step 4 &mdash; Review Matches"))
-    elements.append(body("“Needs Review” and “Unmatched” records deserve attention &mdash; the app deliberately never auto-applies anything below 90% confidence, so a human always has the final say on lower-confidence geocodes."))
-    elements.append(callout("Good to know:", "this build doesn't yet include an in-app grid for accepting or overriding individual low-confidence matches row-by-row. Resolve them one of these ways instead.", AMBER))
+    elements.append(body("“Needs Review” and “Unmatched” records deserve attention &mdash; the app deliberately never auto-applies anything below 95% confidence (or that trips a hard safeguard), so a human always has the final say."))
+    elements.append(h2("Needs Review Queue"))
+    elements.append(body("Every needs-review/unmatched row appears in an editable table directly in the Settlement Matching panel. For each row you can:"))
     elements.append(
         bullets(
             [
-                "<b>Fix the spelling at the source.</b> Most “needs review” cases are a spelling or transliteration difference. Correct it in the response file and re-run matching.",
-                "<b>Turn on semantic matching</b> if you haven't &mdash; it often resolves near-miss spellings RapidFuzz alone scores lower.",
-                "<b>Check the QA Excel Report's “Low Confidence” sheet</b> (Step 5) &mdash; every needs-review/unmatched record with its suggested candidate side by side.",
-                "<b>Source the coordinate manually</b> and enter it into the response file, then re-upload &mdash; the most reliable fix for settlements genuinely missing from the gazetteer.",
+                "<b>Accept</b> the suggested match as-is, or <b>Reject</b> it.",
+                "<b>Edit</b> the suggested settlement, district, or coordinates directly in the table if you already know the right answer.",
+                "Change the <b>Status</b> dropdown directly if needed.",
+            ]
+        )
+    )
+    elements.append(h2("Compare Candidates"))
+    elements.append(body("Below the queue, pick any needs-review record from the dropdown to see the full ranked shortlist the pipeline considered for it side by side &mdash; not just the single top guess:"))
+    elements.append(
+        bullets(
+            [
+                "Settlement, district, region, and every score component (name/semantic/spatial/historical/confidence) for up to 5 candidates.",
+                "Distance in km from a submitted coordinate, when one exists.",
+                "Pick a different candidate from the dropdown and click <b>Use This Candidate</b> &mdash; this replaces the suggestion, marks the row accepted, and is what gets saved and taught back to the system (not the pipeline's original guess).",
+            ]
+        )
+    )
+    elements.append(body("When you accept a match (directly, or via Compare Candidates), the app remembers it: next time the same settlement name comes up in the same district/region, it's recognized instantly as an approved alias. Rejecting a candidate is remembered too, and repeatedly rejecting the same suggestion makes the app less confident in recommending it again."))
+    elements.append(
+        bullets(
+            [
+                "<b>Still can't resolve a record?</b> Fix the spelling at the source and re-run matching, turn on semantic matching if you haven't, check the QA Excel Report's “Low Confidence” sheet (Step 5), or source the coordinate manually and re-upload.",
             ]
         )
     )
@@ -391,8 +426,10 @@ def build() -> None:
     elements.append(
         bullets(
             [
-                "<b>Base layers</b> &mdash; switch between CartoDB Positron, OpenStreetMap, and Esri Satellite via the layer control (top right).",
-                "<b>Overlays</b> &mdash; toggle district boundaries, settlement response records (clustered, colored by status), and review candidates independently.",
+                "<b>Base layers</b> &mdash; switch between Light basemap, OpenStreetMap, Satellite imagery, and Topographic via the layer control (top right).",
+                "<b>Overlays</b> &mdash; toggle district boundaries, settlement response records (clustered, colored by status), review candidates, and a new <b>submitted coordinates + distance</b> layer independently.",
+                "<b>Submitted-to-candidate lines</b> &mdash; for records with an invalid (not merely missing) GPS value, a dashed line connects the original submitted point to the suggested candidate, labeled with the distance.",
+                "<b>Conflict markers</b> &mdash; a review point gets a thicker dashed ring when it has a flagged administrative or spatial conflict, visible at a glance without opening the row.",
                 "<b>Click any marker</b> for settlement name, district, match status, and confidence.",
                 "<b>Zoom controls</b> (top left) plus normal scroll-wheel/drag, like any GIS viewer.",
                 "<b>Fullscreen button</b> (top left) &mdash; expands the map to fill the browser window.",
@@ -401,7 +438,7 @@ def build() -> None:
         )
     )
     elements.append(body("The map updates automatically as you load data, run matching, and apply geocodes &mdash; no manual refresh needed."))
-    elements.append(screenshot("04_map.png", "Full-width map, satellite base layer, layer control open"))
+    elements.append(screenshot("04_map.png", "Full-width map with legend, review candidates, and layer control open"))
     elements.append(PageBreak())
 
     # --- Step 5 ---
@@ -419,13 +456,43 @@ def build() -> None:
                 ["GeoJSON", ".geojson", "Web-GIS-friendly point layer."],
                 ["QA Excel Report", "Excel", "Readiness metrics, validation issues, full match table, “Low Confidence” sheet, district/cluster summaries."],
                 ["QA / Matching Report", "PDF", "Shareable summary of matching results and data quality."],
+                ["Audit Log (CSV)", "CSV", "Every score component, the automatic decision, and any human review decision, reviewer, and note &mdash; one row per matched record."],
+                ["Audit Log (Excel)", "Excel", "Same audit trail as the CSV, in workbook form."],
             ],
             col_widths=[120, 95, CONTENT_WIDTH - 120 - 95],
         )
     )
     elements.append(Spacer(1, 6))
     elements.append(body("A processing log (ocha_processing_log.txt) and a combined <b>Download All Outputs</b> ZIP are generated automatically alongside your selected files. Each output card shows Ready once generated, or an error message if a stage failed."))
-    elements.append(screenshot("05_outputs.png", "Outputs generated and ready to download"))
+    elements.append(screenshot("05_outputs.png", "Outputs generated and ready to download, including the new audit log"))
+    elements.append(PageBreak())
+
+    # --- Database Backup & Import ---
+    elements.append(h1("Place Intelligence Database: Backup &amp; Import"))
+    elements.append(
+        body(
+            "The app learns as you review: accepted matches become approved aliases, and rejections are "
+            "remembered too, both stored locally in data/place_intelligence.db. A panel at the bottom of the "
+            "dashboard lets you manage that history directly."
+        )
+    )
+    elements.append(
+        bullets(
+            [
+                "<b>Export Approved Aliases / Review History / Rejected Matches</b> &mdash; CSV downloads of each table.",
+                "<b>Backup Full Database</b> &mdash; a complete copy of the raw database file.",
+                "<b>Import</b> &mdash; upload a CSV/Excel alias list or a previous .db backup. Files are validated before anything is written, and imports merge with existing history (increasing approval counts on a repeat match) rather than silently overwriting it.",
+            ]
+        )
+    )
+    elements.append(
+        callout(
+            "Hosted deployments:",
+            "unless the hosting platform provides persistent storage, this database resets on every restart/redeploy. Export a backup regularly if you're relying on accumulated alias history in a hosted instance.",
+            AMBER,
+        )
+    )
+    elements.append(screenshot("06_database.png", "Place Intelligence Database panel with export and import controls"))
     elements.append(PageBreak())
 
     # --- Sidebar reference ---
@@ -454,6 +521,7 @@ def build() -> None:
         ("The map shows fewer points than my total record count", "The map only plots rows with a valid coordinate. Rows still Needs Review or Unmatched won't appear until resolved (Step 4) and geocodes applied."),
         ("I want to start over with a different dataset", "Click Restart Process in the sidebar &mdash; clears loaded files, matches, and generated outputs without reloading the app."),
         ("Is any of my data leaving this computer?", "No. Core matching (RapidFuzz, Sentence Transformers) runs locally, and Ollama, if used, is also a local process. The header's Local Mode badge is a permanent reminder of this."),
+        ("A match shows a high score but still landed in Needs Review", "One of the hard safeguards tripped &mdash; a district/region contradiction, an ambiguous name with no way to disambiguate it, excessive spatial distance, near-tied top candidates, a history of rejection for this exact context, or missing gazetteer metadata. Check Compare Candidates (Step 4) to see why; the safeguard is listed in the row's Reason text."),
     ]
     for question, answer in faqs:
         elements.append(Paragraph(question, ParagraphStyle("FAQQ", parent=styles["Body"], fontName="Helvetica-Bold", spaceBefore=6, spaceAfter=2)))
@@ -464,7 +532,7 @@ def build() -> None:
     elements.append(
         styled_table(
             ["Range", "Status"],
-            [["90-100%", chip_cell("Auto Matched", "green")], ["75-89%", chip_cell("Needs Review", "amber")], ["0-74%", chip_cell("Unmatched", "red")]],
+            [["95-100%", chip_cell("Auto Matched", "green")], ["85-94.99%", chip_cell("Needs Review", "amber")], ["0-84.99%", chip_cell("Unmatched", "red")]],
             col_widths=[100, CONTENT_WIDTH - 100],
         )
     )
