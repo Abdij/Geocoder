@@ -115,8 +115,8 @@ Every candidate gets a confidence score (0–100%) from up to six components. If
 
 | Confidence | Status | What happens |
 |---|---|---|
-| **95–100%** | 🟢 Auto Matched | Coordinates are applied automatically — unless a hard safeguard below blocks it. |
-| **85–94.99%** | 🟠 Needs Review | Flagged for manual follow-up — see Step 4 below. |
+| **90–100%** | 🟢 Auto Matched | Coordinates are applied automatically — unless a hard safeguard below blocks it. |
+| **85–89.99%** | 🟠 Needs Review | Flagged for manual follow-up — see Step 4 below. |
 | **Below 85%** | 🔴 Unmatched | No confident candidate was found. |
 
 **A high score alone is never enough.** The app refuses to auto-accept — regardless of confidence — when there's a genuine district/region contradiction, the settlement name exists in more than one district with no way to disambiguate it, the candidate is more than 15km from a submitted coordinate, the top two candidates are within 5 points of each other, this exact candidate has been rejected before for this context, or the candidate is missing required district/region data. A blocked match still lands in Needs Review rather than being downgraded further.
@@ -129,7 +129,7 @@ The matching table shows submitted settlement/district, the suggested match, con
 
 ## 7. Step 4 — Review Matches
 
-"Needs Review" and "Unmatched" records are the ones worth your attention — the app deliberately does **not** auto-apply anything below 95% confidence (or that trips a hard safeguard), so a human always has the final say.
+"Needs Review" and "Unmatched" records are the ones worth your attention — the app deliberately does **not** auto-apply anything below 90% confidence (or that trips a hard safeguard), so a human always has the final say.
 
 ### Needs Review Queue
 
@@ -139,6 +139,11 @@ Every needs-review/unmatched row appears in an editable table directly in the Se
 - **Edit** the suggested settlement, district, or coordinates directly if you already know the right answer.
 - Change the **Status** dropdown directly if needed.
 
+**Reviewing a large batch?** Two tools sit above the table to cut down on row-by-row clicking:
+
+- **Bulk accept/reject by threshold** — drag the confidence slider to a cutoff, then click **Check Accept ≥ Threshold** to tick Accept on every row at or above it in one go, or **Check Reject < Threshold** to tick Reject on everything below it. Nothing is written until you click **Save Reviewed Matches** — this only pre-fills the checkboxes so you can scan the result before committing.
+- **Sort queue by** — reorder the table by confidence (high-to-low or low-to-high) or by row ID, so you can work through the most likely matches first instead of scrolling through the queue in upload order.
+
 ### Compare Candidates
 
 Below the queue, pick any needs-review record from the dropdown to see the full ranked shortlist the pipeline considered for it — not just the single top guess:
@@ -146,8 +151,11 @@ Below the queue, pick any needs-review record from the dropdown to see the full 
 - Settlement, district, region, and every score component (name/semantic/spatial/historical/confidence) for up to 5 candidates.
 - Distance in km from a submitted coordinate, when one exists.
 - Pick a different candidate from the dropdown and click **Use This Candidate** — this replaces the suggestion, marks the row accepted, and is what gets saved and taught back to the system (not the pipeline's original guess).
+- Or click **Reject This Record** to reject it outright without picking an alternate candidate.
 
-When you accept a match — directly, or via Compare Candidates — the app remembers it: next time the same settlement name comes up in the same district/region, it's recognized instantly as an approved alias. Rejecting a candidate is remembered too, and repeatedly rejecting the same suggestion makes the app less confident in recommending it again.
+**Review from the map instead:** on the Settlements Preview Map (Section 8 below), clicking any red or yellow circle jumps straight to that record in this Compare Candidates panel — with the settlement's real-world location still visible on the map while you decide, instead of cross-referencing row IDs against the table.
+
+When you accept a match — directly, via Compare Candidates, or via a map click — the app remembers it: next time the same settlement name comes up in the same district/region, it's recognized instantly as an approved alias. Rejecting a candidate is remembered too, and repeatedly rejecting the same suggestion makes the app less confident in recommending it again.
 
 **Still can't resolve a record?**
 
@@ -169,6 +177,7 @@ Below the matching and outputs panels, the **Settlements Preview Map** gives you
 - **Submitted-to-candidate lines** — for records with an invalid (not merely missing) GPS value, a dashed line connects the original submitted point to the suggested candidate, labeled with the distance.
 - **Conflict markers** — a review point gets a thicker dashed ring when it has a flagged administrative or spatial conflict, visible at a glance.
 - **Click any marker** for a popup with settlement name, district, match status, and confidence.
+- **Click a red or yellow "Review candidates" marker** to open that exact record in the Compare Candidates panel above (Step 4) — a quick way to review with the settlement's real-world location still in view, without hunting for its row in the table.
 - **Zoom controls** (top left) and normal scroll-wheel/drag zoom and pan, like any GIS viewer.
 - **Fullscreen button** (top left, expand icon) — opens the map to fill the browser window, useful when working with a large or dense dataset.
 - **Mini-map** (bottom left) — shows your current viewport in the context of the wider region.
@@ -262,8 +271,8 @@ One of the hard safeguards tripped — a district/region contradiction, an ambig
 
 | Range | Status |
 |---|---|
-| 95–100% | Auto Matched |
-| 85–94.99% | Needs Review |
+| 90–100% | Auto Matched |
+| 85–89.99% | Needs Review |
 | Below 85% | Unmatched |
 
 **Status colors used throughout the app (table pills and map markers)**

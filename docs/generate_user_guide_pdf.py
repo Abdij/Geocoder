@@ -368,8 +368,8 @@ def build() -> None:
         styled_table(
             ["Confidence", "Status", "What happens"],
             [
-                ["95-100%", chip_cell("Auto Matched", "green"), "Coordinates applied automatically &mdash; unless a hard safeguard below blocks it."],
-                ["85-94.99%", chip_cell("Needs Review", "amber"), "Flagged for manual follow-up &mdash; see Step 4."],
+                ["90-100%", chip_cell("Auto Matched", "green"), "Coordinates applied automatically &mdash; unless a hard safeguard below blocks it."],
+                ["85-89.99%", chip_cell("Needs Review", "amber"), "Flagged for manual follow-up &mdash; see Step 4."],
                 ["0-84.99%", chip_cell("Unmatched", "red"), "No confident candidate found."],
             ],
             col_widths=[70, 110, CONTENT_WIDTH - 70 - 110],
@@ -387,7 +387,7 @@ def build() -> None:
 
     # --- Step 4 ---
     elements.append(h1("Step 4 &mdash; Review Matches"))
-    elements.append(body("“Needs Review” and “Unmatched” records deserve attention &mdash; the app deliberately never auto-applies anything below 95% confidence (or that trips a hard safeguard), so a human always has the final say."))
+    elements.append(body("“Needs Review” and “Unmatched” records deserve attention &mdash; the app deliberately never auto-applies anything below 90% confidence (or that trips a hard safeguard), so a human always has the final say."))
     elements.append(h2("Needs Review Queue"))
     elements.append(body("Every needs-review/unmatched row appears in an editable table directly in the Settlement Matching panel. For each row you can:"))
     elements.append(
@@ -399,6 +399,15 @@ def build() -> None:
             ]
         )
     )
+    elements.append(body("<b>Reviewing a large batch?</b> Two tools above the table cut down on row-by-row clicking:"))
+    elements.append(
+        bullets(
+            [
+                "<b>Bulk accept/reject by threshold</b> &mdash; drag the confidence slider to a cutoff, then click <b>Check Accept &ge; Threshold</b> or <b>Check Reject &lt; Threshold</b> to tick every matching row at once. Nothing is written until <b>Save Reviewed Matches</b> is clicked.",
+                "<b>Sort queue by</b> &mdash; reorder by confidence (high-to-low or low-to-high) or row ID, to work through the most likely matches first.",
+            ]
+        )
+    )
     elements.append(h2("Compare Candidates"))
     elements.append(body("Below the queue, pick any needs-review record from the dropdown to see the full ranked shortlist the pipeline considered for it side by side &mdash; not just the single top guess:"))
     elements.append(
@@ -407,10 +416,18 @@ def build() -> None:
                 "Settlement, district, region, and every score component (name/semantic/spatial/historical/confidence) for up to 5 candidates.",
                 "Distance in km from a submitted coordinate, when one exists.",
                 "Pick a different candidate from the dropdown and click <b>Use This Candidate</b> &mdash; this replaces the suggestion, marks the row accepted, and is what gets saved and taught back to the system (not the pipeline's original guess).",
+                "Or click <b>Reject This Record</b> to reject it outright without picking an alternate candidate.",
             ]
         )
     )
-    elements.append(body("When you accept a match (directly, or via Compare Candidates), the app remembers it: next time the same settlement name comes up in the same district/region, it's recognized instantly as an approved alias. Rejecting a candidate is remembered too, and repeatedly rejecting the same suggestion makes the app less confident in recommending it again."))
+    elements.append(
+        callout(
+            "Review from the map instead:",
+            "on the Settlements Preview Map (Section 8), clicking any red or yellow circle jumps straight to that record in this Compare Candidates panel &mdash; with the settlement's real-world location still visible while you decide.",
+            NAVY,
+        )
+    )
+    elements.append(body("When you accept a match (directly, via Compare Candidates, or via a map click), the app remembers it: next time the same settlement name comes up in the same district/region, it's recognized instantly as an approved alias. Rejecting a candidate is remembered too, and repeatedly rejecting the same suggestion makes the app less confident in recommending it again."))
     elements.append(
         bullets(
             [
@@ -431,6 +448,7 @@ def build() -> None:
                 "<b>Submitted-to-candidate lines</b> &mdash; for records with an invalid (not merely missing) GPS value, a dashed line connects the original submitted point to the suggested candidate, labeled with the distance.",
                 "<b>Conflict markers</b> &mdash; a review point gets a thicker dashed ring when it has a flagged administrative or spatial conflict, visible at a glance without opening the row.",
                 "<b>Click any marker</b> for settlement name, district, match status, and confidence.",
+                "<b>Click a red or yellow review-candidate marker</b> to open that exact record in the Compare Candidates panel (Step 4) &mdash; review it with its real-world location still on screen, without hunting for its row in the table.",
                 "<b>Zoom controls</b> (top left) plus normal scroll-wheel/drag, like any GIS viewer.",
                 "<b>Fullscreen button</b> (top left) &mdash; expands the map to fill the browser window.",
                 "<b>Mini-map</b> (bottom left) &mdash; shows your current viewport in the wider region.",
@@ -532,7 +550,7 @@ def build() -> None:
     elements.append(
         styled_table(
             ["Range", "Status"],
-            [["95-100%", chip_cell("Auto Matched", "green")], ["85-94.99%", chip_cell("Needs Review", "amber")], ["0-84.99%", chip_cell("Unmatched", "red")]],
+            [["90-100%", chip_cell("Auto Matched", "green")], ["85-89.99%", chip_cell("Needs Review", "amber")], ["0-84.99%", chip_cell("Unmatched", "red")]],
             col_widths=[100, CONTENT_WIDTH - 100],
         )
     )

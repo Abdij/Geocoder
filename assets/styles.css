@@ -71,6 +71,15 @@ header[data-testid="stHeader"] [role="button"] {
     color: rgba(255, 255, 255, 0.86);
 }
 
+/* The expander header itself renders on a light background (unlike the
+   dark sidebar rail around it), so the light text color forced above for
+   every sidebar span/p makes its label ("Upload files") invisible. Force
+   it back to a dark, readable color scoped to just this element. */
+[data-testid="stSidebar"] .stExpander summary,
+[data-testid="stSidebar"] .stExpander summary * {
+    color: rgb(15, 23, 42) !important;
+}
+
 .ocha-shell-header {
     align-items: center;
     background: #074a8f;
@@ -144,7 +153,10 @@ header[data-testid="stHeader"] [role="button"] {
 
 .about-pill {
     border: 1px solid rgba(255, 255, 255, 0.52);
-    color: #e6f0ff;
+    /* !important beats Streamlit's own default link color for anchors
+       inside markdown content, which otherwise renders this near-invisible
+       dark blue on the header's dark blue background. */
+    color: #e6f0ff !important;
     cursor: pointer;
     text-decoration: none;
     transition: background 0.15s ease, border-color 0.15s ease;
