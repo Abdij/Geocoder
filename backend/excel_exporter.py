@@ -7,8 +7,27 @@ from typing import Iterable
 import pandas as pd
 
 from backend.district_summary import build_summary_tables, district_groups
-from backend.utils import output_path, truncate_sheet_name
+from backend.utils import detect_column_map, output_path, truncate_sheet_name
 from config import CLUSTER_COLORS
+
+# Longest key first so "child protection" matches before the bare
+# "protection" substring it also contains.
+_CLUSTER_COLOR_KEYS = sorted(CLUSTER_COLORS, key=len, reverse=True)
+
+
+def _cluster_color(cluster_name: str) -> str | None:
+    """Resolve a real-world cluster label to a configured color by substring.
+
+    Response data rarely uses the bare cluster name from CLUSTER_COLORS
+    ("Food Security Cluster", "Shelter and NFIs", "Gender Based Violence"),
+    so an exact dict lookup misses most real values. This checks whether any
+    known cluster key appears anywhere in the (lowercased) label instead.
+    """
+    normalized = cluster_name.strip().lower()
+    for key in _CLUSTER_COLOR_KEYS:
+        if key in normalized:
+            return CLUSTER_COLORS[key]
+    return None
 
 
 HEADER_FILL = "1F4E79"
@@ -106,6 +125,8 @@ def _write_dataframe(writer: pd.ExcelWriter, df: pd.DataFrame, sheet_name: str) 
 def _enhance_xlsxwriter_district_workbook(
     writer: pd.ExcelWriter,
     summary_tables: dict[str, pd.DataFrame],
+    district_sheets: list[tuple[str, pd.DataFrame]] | None = None,
+    cluster_col: str | None = None,
 ) -> None:
     workbook = writer.book
     summary_df = summary_tables["district_summary"]
@@ -126,19 +147,40 @@ def _enhance_xlsxwriter_district_workbook(
         chart.set_size({"width": 720, "height": 320})
         worksheet.insert_chart("H2", chart)
 
-    cluster_df = summary_tables["cluster_summary"]
-    if "Cluster Summary" not in writer.sheets or "Cluster" not in cluster_df.columns:
-        return
+    # Shared across the Cluster Summary sheet and every per-district sheet
+    # below so xlsxwriter reuses one format per color instead of creating a
+    # new one per row (xlsxwriter has a hard cap on formats per workbook).
+    color_formats: dict[str, object] = {}
 
-    worksheet = writer.sheets["Cluster Summary"]
-    color_formats = {
-        cluster: workbook.add_format({"bg_color": _hex_color(color), "font_color": "#000000"})
-        for cluster, color in CLUSTER_COLORS.items()
-    }
-    for row_offset, cluster in enumerate(cluster_df["Cluster"].fillna("").astype(str).str.lower(), start=1):
-        row_format = color_formats.get(cluster)
-        if row_format:
+    cluster_df = summary_tables["cluster_summary"]
+    if "Cluster Summary" in writer.sheets and "Cluster" in cluster_df.columns:
+        worksheet = writer.sheets["Cluster Summary"]
+        for row_offset, cluster in enumerate(cluster_df["Cluster"].fillna("").astype(str), start=1):
+            color = _cluster_color(cluster)
+            if not color:
+                continue
+            row_format = color_formats.setdefault(
+                color, workbook.add_format({"bg_color": _hex_color(color), "font_color": "#000000"})
+            )
             worksheet.set_row(row_offset, None, row_format)
+
+    # Color each response row within its own district sheet by cluster too,
+    # not just the aggregate Cluster Summary sheet - xlsxwriter can't read
+    # back cells it already wrote, so this needs the source dataframe rather
+    # than re-reading the sheet the way the openpyxl path below does.
+    if district_sheets and cluster_col:
+        for sheet_name, group in district_sheets:
+            if cluster_col not in group.columns or sheet_name not in writer.sheets:
+                continue
+            worksheet = writer.sheets[sheet_name]
+            for row_offset, cluster in enumerate(group[cluster_col].fillna("").astype(str), start=1):
+                color = _cluster_color(cluster)
+                if not color:
+                    continue
+                row_format = color_formats.setdefault(
+                    color, workbook.add_format({"bg_color": _hex_color(color), "font_color": "#000000"})
+                )
+                worksheet.set_row(row_offset, None, row_format)
 
 
 def _set_column_widths(worksheet) -> None:
@@ -213,20 +255,23 @@ def export_district_workbook(processed_df: pd.DataFrame) -> Path:
     summary_tables = build_summary_tables(processed_df)
     _, groups = district_groups(processed_df)
     used_sheet_names: set[str] = set()
+    cluster_col = detect_column_map(processed_df).get("cluster")
 
     with _excel_writer(path) as writer:
         _write_dataframe(writer, summary_tables["district_summary"], "Summary")
         _write_dataframe(writer, summary_tables["cluster_summary"], "Cluster Summary")
         _write_dataframe(writer, summary_tables["partner_summary"], "Partner Summary")
 
+        district_sheets: list[tuple[str, pd.DataFrame]] = []
         for district, group in groups:
             sheet_name = truncate_sheet_name(district, used_sheet_names)
             _write_dataframe(writer, group, sheet_name)
+            district_sheets.append((sheet_name, group))
 
         if _is_xlsxwriter(writer):
-            _enhance_xlsxwriter_district_workbook(writer, summary_tables)
+            _enhance_xlsxwriter_district_workbook(writer, summary_tables, district_sheets, cluster_col)
         else:
-            _enhance_district_workbook(writer.book)
+            _enhance_district_workbook(writer.book, [name for name, _ in district_sheets], cluster_col)
     return path
 
 
@@ -242,10 +287,32 @@ def export_district_summary(processed_df: pd.DataFrame) -> Path:
     return path
 
 
-def _enhance_district_workbook(workbook_or_path) -> None:
+def _color_sheet_rows_by_cluster(ws, header_name: str) -> None:
+    from openpyxl.styles import Font, PatternFill
+
+    cluster_col = None
+    for idx, cell in enumerate(ws[1], start=1):
+        if str(cell.value).strip().lower() == header_name.strip().lower():
+            cluster_col = idx
+            break
+    if not cluster_col:
+        return
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        cluster = str(row[cluster_col - 1].value or "")
+        fill_color = _cluster_color(cluster)
+        if fill_color:
+            for cell in row:
+                cell.fill = PatternFill("solid", fgColor=fill_color)
+                cell.font = Font(color="000000")
+
+
+def _enhance_district_workbook(
+    workbook_or_path,
+    district_sheet_names: list[str] | None = None,
+    cluster_col: str | None = None,
+) -> None:
     from openpyxl import load_workbook
     from openpyxl.chart import BarChart, Reference
-    from openpyxl.styles import Font, PatternFill
 
     should_save = isinstance(workbook_or_path, (str, Path))
     path = Path(workbook_or_path) if should_save else None
@@ -268,20 +335,14 @@ def _enhance_district_workbook(workbook_or_path) -> None:
             ws.add_chart(chart, "H2")
 
     if "Cluster Summary" in workbook.sheetnames:
-        ws = workbook["Cluster Summary"]
-        cluster_col = None
-        for idx, cell in enumerate(ws[1], start=1):
-            if str(cell.value).strip().lower() == "cluster":
-                cluster_col = idx
-                break
-        if cluster_col:
-            for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
-                cluster = str(row[cluster_col - 1].value or "").strip().lower()
-                fill_color = CLUSTER_COLORS.get(cluster)
-                if fill_color:
-                    for cell in row:
-                        cell.fill = PatternFill("solid", fgColor=fill_color)
-                        cell.font = Font(color="000000")
+        _color_sheet_rows_by_cluster(workbook["Cluster Summary"], "Cluster")
+
+    # Color each response row within its own district sheet by cluster too,
+    # not just the aggregate Cluster Summary sheet.
+    if district_sheet_names and cluster_col:
+        for sheet_name in district_sheet_names:
+            if sheet_name in workbook.sheetnames:
+                _color_sheet_rows_by_cluster(workbook[sheet_name], cluster_col)
 
     if should_save and path:
         workbook.save(path)

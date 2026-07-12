@@ -835,6 +835,51 @@ def _review_queue_editor(matches_df: pd.DataFrame) -> pd.DataFrame:
         "Accept the suggested match, reject it, or correct the settlement, district, "
         "or coordinates directly, then click Save Reviewed Matches below."
     )
+
+    bulk_col1, bulk_col2, bulk_col3 = st.columns([2, 1, 1])
+    with bulk_col1:
+        threshold = st.slider(
+            "Bulk action confidence threshold (%)", 0, 100, 85, key="bulk_review_threshold"
+        )
+    with bulk_col2:
+        accept_clicked = st.button(
+            "Check Accept ≥ Threshold", use_container_width=True, key="bulk_accept_btn"
+        )
+    with bulk_col3:
+        reject_clicked = st.button(
+            "Check Reject < Threshold", use_container_width=True, key="bulk_reject_btn"
+        )
+
+    if accept_clicked or reject_clicked:
+        confidence = review_subset["confidence"].fillna(0)
+        target_mask = confidence >= threshold if accept_clicked else confidence < threshold
+        target_ids = review_subset.loc[target_mask, "record_id"]
+        idx = matches_df.index[matches_df["record_id"].isin(target_ids)]
+        if accept_clicked:
+            matches_df.loc[idx, "accept"] = True
+            matches_df.loc[idx, "reject"] = False
+        else:
+            matches_df.loc[idx, "accept"] = False
+            matches_df.loc[idx, "reject"] = True
+        st.session_state.match_df = matches_df
+        st.toast(
+            f"{'Checked Accept on' if accept_clicked else 'Checked Reject on'} {len(idx):,} record(s). "
+            "Review below, then click Save Reviewed Matches to commit."
+        )
+        st.rerun()
+
+    sort_choice = st.selectbox(
+        "Sort queue by",
+        options=["Confidence (high to low)", "Confidence (low to high)", "Row ID"],
+        key="review_queue_sort",
+    )
+    if sort_choice == "Confidence (high to low)":
+        review_subset = review_subset.sort_values("confidence", ascending=False)
+    elif sort_choice == "Confidence (low to high)":
+        review_subset = review_subset.sort_values("confidence", ascending=True)
+    else:
+        review_subset = review_subset.sort_values("record_id")
+
     display_columns = [
         "record_id",
         "submitted_settlement",

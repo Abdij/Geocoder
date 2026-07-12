@@ -19,11 +19,18 @@ PLACE_INTELLIGENCE_DB_PATH = DATA_DIR / "place_intelligence.db"
 DEFAULT_CRS = "EPSG:4326"
 PROJECTED_CRS = "EPSG:3857"
 
-# Raised from 90/75 as part of the Place Intelligence Engine upgrade: the
-# layered candidate generator and confidence_scorer's hard safety gates now
-# carry more of the acceptance burden, so the confidence bar itself is
-# stricter. See README migration notes for the full rationale.
-MATCH_AUTO_ACCEPT = 95
+# MATCH_AUTO_ACCEPT was raised to 95 as part of the Place Intelligence Engine
+# upgrade on the assumption that spatial evidence would often be available to
+# help clear the bar. In practice, match_records() only ever runs on records
+# that are missing/invalid on coordinates by definition, so spatial evidence
+# is never available at auto-accept time - even a perfect name/district/region
+# match tops out around 92-93% once spatial and historical evidence are
+# absent, permanently short of 95. Reverted to the original 90 so records
+# with strong available evidence can actually clear the auto-accept bar; the
+# hard safety gates in confidence_scorer.determine_match_status()
+# (contradictions, ambiguous names, distance, repeated rejections) still
+# block anything risky regardless of this threshold.
+MATCH_AUTO_ACCEPT = 90
 MATCH_NEEDS_REVIEW = 85
 AMBIGUITY_MARGIN = 5
 MAX_AUTO_ACCEPT_DISTANCE_KM = 15
@@ -122,6 +129,15 @@ COLUMN_ALIASES = {
 REQUIRED_RESPONSE_FIELDS = ["settlement", "district"]
 REQUIRED_GAZETTEER_FIELDS = ["settlement", "district", "latitude", "longitude"]
 
+# Matched by substring (see excel_exporter._cluster_color), not exact
+# equality, since real response data rarely uses the bare cluster name
+# ("Food Security Cluster", "Shelter and NFIs", "Gender Based Violence" all
+# need to resolve). Protection's Areas of Responsibility (Child Protection,
+# GBV, HLP, Mine Action) share Protection's color rather than getting their
+# own, since they're sub-clusters of it, not independent clusters. Ordered
+# longest-key-first isn't required here since every key maps to a distinct
+# color family, but child/gbv/hlp are listed close to "protection" to make
+# that relationship obvious when this dict is edited.
 CLUSTER_COLORS = {
     "cccm": "5B9BD5",
     "education": "70AD47",
@@ -129,6 +145,11 @@ CLUSTER_COLORS = {
     "health": "ED7D31",
     "nutrition": "A64D79",
     "protection": "7030A0",
+    "child protection": "7030A0",
+    "gender based violence": "7030A0",
+    "gbv": "7030A0",
+    "hlp": "7030A0",
+    "mine action": "7030A0",
     "shelter": "4472C4",
     "wash": "00A6A6",
 }

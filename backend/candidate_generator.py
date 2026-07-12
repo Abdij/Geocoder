@@ -188,7 +188,10 @@ def generate_candidates(
     immediately accept) the first RapidFuzz hit - always returns the
     ranked shortlist for the reviewer to compare.
     """
-    settlement_norm = normalize_place_name(submitted_settlement)
+    # Response data often submits a facility name ("Kaharey Health Center")
+    # rather than the settlement itself; strip that noise before matching
+    # against the (already-clean) gazetteer settlement names.
+    settlement_norm = normalize_place_name(submitted_settlement, strip_generic_suffixes=True)
     district_norm = normalize_place_name(submitted_district)
     region_norm = normalize_place_name(submitted_region)
 
@@ -250,8 +253,12 @@ def generate_candidates(
             exact_hit = True
 
     # 6-8. Fuzzy tiers: district-constrained, then region-constrained, then national.
+    # Built from the already-normalized (and suffix-stripped) parts rather than
+    # re-normalizing the raw concatenation, since a trailing suffix like
+    # "Health Center" would no longer be at the end of the string once district
+    # and region are appended, so it would never get caught by the suffix strip.
     fuzzy_rows = tagged.iloc[0:0]
-    query = normalize_place_name(f"{submitted_settlement} {submitted_district} {submitted_region}")
+    query = " ".join(part for part in (settlement_norm, district_norm, region_norm) if part)
     if district_norm:
         district_subset = tagged[tagged["_district_norm"] == district_norm]
         fuzzy_rows = _fuzzy_tier(district_subset, query)

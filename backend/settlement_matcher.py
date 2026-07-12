@@ -158,7 +158,7 @@ def _empty_row(
         "accept": False,
         "reject": False,
         "run_id": run_id,
-        "normalized_submitted_settlement": normalize_place_name(submitted_settlement),
+        "normalized_submitted_settlement": normalize_place_name(submitted_settlement, strip_generic_suffixes=True),
         "suggested_gazetteer_id": "",
         "official_district": "",
         "official_region": "",
@@ -252,7 +252,7 @@ def _build_match_row(
     use_ollama: bool,
     ollama_cache: OllamaCache,
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
-    normalized_submitted_settlement = normalize_place_name(submitted_settlement)
+    normalized_submitted_settlement = normalize_place_name(submitted_settlement, strip_generic_suffixes=True)
     if not normalized_submitted_settlement:
         return _empty_row(
             record_id, source_row, submitted_settlement, submitted_district, submitted_region,
@@ -483,7 +483,10 @@ def match_records(
                 normalize_embeddings=True,
                 show_progress_bar=False,
             )
-        except ImportError:
+        except (ImportError, OSError, RuntimeError):
+            # Model package missing, or the pretrained weights/config failed to
+            # download or load (flaky network, Hub outage, etc.) - degrade to
+            # RapidFuzz-only matching instead of crashing the whole run.
             semantic_model = None
             gazetteer_embeddings = None
 

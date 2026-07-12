@@ -79,7 +79,7 @@ def _record_review_learning(matches_df: pd.DataFrame) -> None:
             submitted_district = match.get("submitted_district", "")
             submitted_region = match.get("submitted_region", "")
             normalized_submitted = match.get("normalized_submitted_settlement") or normalize_place_name(
-                submitted_settlement
+                submitted_settlement, strip_generic_suffixes=True
             )
             suggested_gazetteer_id = match.get("suggested_gazetteer_id", "") or ""
             confidence = match.get("confidence")

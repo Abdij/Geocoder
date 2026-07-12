@@ -10,7 +10,7 @@ def test_high_confidence_with_no_issues_is_auto_accepted():
 
 
 def test_moderate_confidence_is_needs_review():
-    result = determine_match_status(confidence=90.0, district_score=100.0, region_score=100.0)
+    result = determine_match_status(confidence=87.0, district_score=100.0, region_score=100.0)
     assert result.status == "needs_review"
 
 
