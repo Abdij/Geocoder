@@ -227,6 +227,7 @@ def create_response_map(processed_df: pd.DataFrame, boundary_gdf=None, matches_d
             if pd.notna(distance_km):
                 popup_lines.append(f"Distance from submitted point: {distance_km:.1f} km")
 
+            record_id = match.get("record_id")
             folium.CircleMarker(
                 location=[float(lat), float(lon)],
                 radius=8,
@@ -237,6 +238,10 @@ def create_response_map(processed_df: pd.DataFrame, boundary_gdf=None, matches_d
                 fill_color="#ffffff",
                 fill_opacity=0.65,
                 popup=folium.Popup("<br>".join(popup_lines), max_width=320),
+                # Encodes the record so the dashboard can read back which marker
+                # was clicked (via st_folium's last_object_clicked_tooltip) and
+                # open that record for review without leaving the map.
+                tooltip=f"map-select:{int(record_id)}" if pd.notna(record_id) else None,
             ).add_to(review_layer)
 
             # The submitted coordinate is only meaningful for records that

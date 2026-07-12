@@ -965,6 +965,13 @@ def _candidate_comparison_panel(matches_df: pd.DataFrame) -> pd.DataFrame:
     if not reviewable_ids:
         return matches_df
 
+    # A map click (see _handle_map_click) sets this key directly to jump the
+    # selectbox to that record. If the record no longer qualifies (e.g. it
+    # was reviewed and left the queue since the click), st.selectbox would
+    # raise on a default value outside `options` - drop it instead.
+    if st.session_state.get("candidate_comparison_record") not in reviewable_ids:
+        st.session_state.pop("candidate_comparison_record", None)
+
     st.markdown("**Compare Candidates**")
     st.caption(
         "Inspect the top alternatives the pipeline considered for a specific record, "
@@ -1022,12 +1029,22 @@ def _candidate_comparison_panel(matches_df: pd.DataFrame) -> pd.DataFrame:
         key="candidate_comparison_choice",
     )
 
-    if st.button("Use This Candidate", key="use_candidate_button"):
-        chosen = candidate_by_rank[chosen_rank]
-        matches_df = apply_candidate_selection(matches_df, selected_id, chosen)
-        st.session_state.match_df = matches_df
-        st.success(f"Row {selected_id} updated to use candidate #{chosen_rank}: {chosen['settlement']}.")
-        st.rerun()
+    accept_col, reject_col = st.columns(2)
+    with accept_col:
+        if st.button("Use This Candidate", key="use_candidate_button", use_container_width=True):
+            chosen = candidate_by_rank[chosen_rank]
+            matches_df = apply_candidate_selection(matches_df, selected_id, chosen)
+            st.session_state.match_df = matches_df
+            st.success(f"Row {selected_id} updated to use candidate #{chosen_rank}: {chosen['settlement']}.")
+            st.rerun()
+    with reject_col:
+        if st.button("Reject This Record", key="reject_candidate_button", use_container_width=True):
+            idx = matches_df.index[matches_df["record_id"] == selected_id]
+            matches_df.loc[idx, "accept"] = False
+            matches_df.loc[idx, "reject"] = True
+            st.session_state.match_df = matches_df
+            st.info(f"Row {selected_id} marked for rejection. Click Save Reviewed Matches to commit.")
+            st.rerun()
 
     return matches_df
 
@@ -1221,6 +1238,16 @@ def _map_panel() -> None:
     if legend_html:
         _html(legend_html)
     _html(_map_metric_items(processed_df))
+    has_review_candidates = (
+        matches_df is not None
+        and not matches_df.empty
+        and matches_df["status"].astype(str).str.lower().isin({"needs_review", "unresolved"}).any()
+    )
+    if has_review_candidates:
+        st.caption(
+            "Click a red or yellow circle to open that record below, with its "
+            "settlement/district context still visible on the map."
+        )
     try:
         response_map = create_response_map(
             processed_df,
@@ -1230,16 +1257,42 @@ def _map_panel() -> None:
         try:
             from streamlit_folium import st_folium
 
-            st_folium(
+            map_state = st_folium(
                 response_map,
                 use_container_width=True,
                 height=DASHBOARD_MAP_HEIGHT,
-                returned_objects=[],
+                returned_objects=["last_object_clicked_tooltip"],
+                key="response_map",
             )
+            _handle_map_click(map_state)
         except ImportError:
             components.html(_response_map_html(processed_df), height=DASHBOARD_MAP_HEIGHT + 20, scrolling=False)
     except Exception as error:
         st.warning(f"Map preview is unavailable: {error}")
+
+
+def _handle_map_click(map_state: dict | None) -> None:
+    """Route a click on a review-candidate marker to the Compare Candidates panel below.
+
+    st_folium keeps returning the same last_object_clicked_tooltip on every
+    rerun until the user clicks a different marker, so this only acts (and
+    reruns) when the click is new - otherwise every unrelated interaction on
+    the page would re-trigger the same selection in an infinite loop.
+    """
+    if not map_state:
+        return
+    tooltip = map_state.get("last_object_clicked_tooltip")
+    if not tooltip or not tooltip.startswith("map-select:"):
+        return
+    if tooltip == st.session_state.get("_map_last_click_tooltip"):
+        return
+    st.session_state["_map_last_click_tooltip"] = tooltip
+    try:
+        record_id = int(tooltip.split(":", 1)[1])
+    except (IndexError, ValueError):
+        return
+    st.session_state["candidate_comparison_record"] = record_id
+    st.rerun()
 
 
 def _output_row(title: str, output_key: str, detail: str, outputs: dict[str, str]) -> str:
