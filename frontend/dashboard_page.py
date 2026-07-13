@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import html
 import importlib.util
 import time
@@ -37,7 +36,6 @@ from backend.validate_data import validate_response_data
 from config import (
     APP_NAME,
     APP_TAGLINE,
-    ASSETS_DIR,
     MAX_AUTO_ACCEPT_DISTANCE_KM,
     STATIC_DIR,
     STATUS_COLORS,
@@ -73,14 +71,6 @@ def _e(value: Any) -> str:
 def _html(markup: str) -> None:
     cleaned = "\n".join(line.strip() for line in markup.strip().splitlines())
     st.markdown(cleaned, unsafe_allow_html=True)
-
-
-def _file_icon() -> str:
-    mark_path = ASSETS_DIR / "ocha_mark.svg"
-    if not mark_path.exists():
-        return ""
-    encoded = base64.b64encode(mark_path.read_bytes()).decode("ascii")
-    return f"data:image/svg+xml;base64,{encoded}"
 
 
 def _state_defaults() -> None:
@@ -349,7 +339,7 @@ def _ensure_processed() -> pd.DataFrame:
 
 
 def _write_log(outputs: dict[str, str], elapsed: float, stage_timings: list[tuple[str, float]] | None = None) -> str:
-    path = output_path("ocha_processing_log.txt")
+    path = output_path("settlement_processing_log.txt")
     validation = st.session_state.get("validation_report", {})
     metrics = validation.get("metrics", {}) if validation else {}
     lines = [
@@ -375,7 +365,7 @@ def _zip_outputs(outputs: dict[str, str]) -> str | None:
     existing = [(label, Path(path)) for label, path in outputs.items() if Path(path).exists()]
     if not existing:
         return None
-    zip_path = output_path("ocha_all_outputs.zip")
+    zip_path = output_path("settlement_all_outputs.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
         for _, path in existing:
             archive.write(path, arcname=path.name)
@@ -511,8 +501,6 @@ def _user_guide_href() -> str:
 
 
 def _top_header() -> None:
-    mark = _file_icon()
-    mark_html = f'<img src="{mark}" alt="OCHA" />' if mark else '<span>OCHA</span>'
     guide_href = _user_guide_href()
     guide_html = (
         f'<a class="about-pill" href="{_e(guide_href)}" target="_blank" rel="noopener noreferrer">User Guide</a>'
@@ -521,15 +509,15 @@ def _top_header() -> None:
     )
     _html(
         f"""
-        <div class="ocha-shell-header">
-            <div class="ocha-brand">
-                <div class="ocha-brand-mark">{mark_html}</div>
+        <div class="app-shell-header">
+            <div class="app-brand">
+                <div class="app-brand-mark">&#127757;</div>
                 <div>
-                    <div class="ocha-title">{_e(APP_NAME)}</div>
-                    <div class="ocha-subtitle">Geocode &bull; Summarize &bull; Map &bull; Export</div>
+                    <div class="app-title">{_e(APP_NAME)}</div>
+                    <div class="app-subtitle">Geocode &bull; Summarize &bull; Map &bull; Export</div>
                 </div>
             </div>
-            <div class="ocha-header-actions">
+            <div class="app-header-actions">
                 <span class="local-mode">Local Mode <span>(All data stays on this device)</span></span>
                 {guide_html}
             </div>

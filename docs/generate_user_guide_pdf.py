@@ -481,7 +481,7 @@ def build() -> None:
         )
     )
     elements.append(Spacer(1, 6))
-    elements.append(body("A processing log (ocha_processing_log.txt) and a combined <b>Download All Outputs</b> ZIP are generated automatically alongside your selected files. Each output card shows Ready once generated, or an error message if a stage failed."))
+    elements.append(body("A processing log (settlement_processing_log.txt) and a combined <b>Download All Outputs</b> ZIP are generated automatically alongside your selected files. Each output card shows Ready once generated, or an error message if a stage failed."))
     elements.append(screenshot("05_outputs.png", "Outputs generated and ready to download, including the new audit log"))
     elements.append(PageBreak())
 

@@ -1,18 +1,18 @@
 :root {
-    --ocha-blue: #0b5dbb;
-    --ocha-blue-dark: #06396f;
-    --ocha-rail: #06182e;
-    --ocha-rail-soft: #0b2546;
-    --ocha-ink: #101828;
-    --ocha-muted: #667085;
-    --ocha-border: #d9e2ef;
-    --ocha-canvas: #f4f7fb;
-    --ocha-card: #ffffff;
-    --ocha-green: #16a34a;
-    --ocha-orange: #f59e0b;
-    --ocha-red: #ef4444;
-    --ocha-purple: #7c3aed;
-    --ocha-cyan: #0ea5a8;
+    --app-blue: #0b5dbb;
+    --app-blue-dark: #06396f;
+    --app-rail: #06182e;
+    --app-rail-soft: #0b2546;
+    --app-ink: #101828;
+    --app-muted: #667085;
+    --app-border: #d9e2ef;
+    --app-canvas: #f4f7fb;
+    --app-card: #ffffff;
+    --app-green: #16a34a;
+    --app-orange: #f59e0b;
+    --app-red: #ef4444;
+    --app-purple: #7c3aed;
+    --app-cyan: #0ea5a8;
 }
 
 html,
@@ -22,7 +22,7 @@ body,
 }
 
 .stApp {
-    background: var(--ocha-canvas);
+    background: var(--app-canvas);
 }
 
 .block-container {
@@ -47,12 +47,12 @@ header[data-testid="stHeader"] [role="button"] {
 }
 
 [data-testid="stSidebar"] {
-    background: var(--ocha-rail);
+    background: var(--app-rail);
     border-right: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 [data-testid="stSidebar"] > div {
-    background: var(--ocha-rail);
+    background: var(--app-rail);
     padding-top: 1rem;
 }
 
@@ -80,7 +80,7 @@ header[data-testid="stHeader"] [role="button"] {
     color: rgb(15, 23, 42) !important;
 }
 
-.ocha-shell-header {
+.app-shell-header {
     align-items: center;
     background: #074a8f;
     color: #ffffff;
@@ -91,14 +91,14 @@ header[data-testid="stHeader"] [role="button"] {
     padding: 0.9rem 1.5rem;
 }
 
-.ocha-brand {
+.app-brand {
     align-items: center;
     display: flex;
     gap: 0.85rem;
     min-width: 0;
 }
 
-.ocha-brand-mark {
+.app-brand-mark {
     align-items: center;
     display: flex;
     flex: 0 0 auto;
@@ -107,24 +107,24 @@ header[data-testid="stHeader"] [role="button"] {
     width: 52px;
 }
 
-.ocha-brand-mark img {
+.app-brand-mark img {
     height: 60px;
     width: 60px;
 }
 
-.ocha-title {
+.app-title {
     font-size: 1.35rem;
     font-weight: 800;
     line-height: 1.1;
 }
 
-.ocha-subtitle {
+.app-subtitle {
     color: rgba(255, 255, 255, 0.78);
     font-size: 0.86rem;
     margin-top: 0.28rem;
 }
 
-.ocha-header-actions {
+.app-header-actions {
     align-items: center;
     display: flex;
     gap: 0.8rem;
@@ -211,7 +211,7 @@ a.about-pill:focus-visible {
 }
 
 .workflow-item.done span {
-    background: var(--ocha-green);
+    background: var(--app-green);
 }
 
 .workflow-item.active {
@@ -264,8 +264,8 @@ a.about-pill:focus-visible {
 .summary-card,
 .uploaded-card,
 .output-card {
-    background: var(--ocha-card);
-    border: 1px solid var(--ocha-border);
+    background: var(--app-card);
+    border: 1px solid var(--app-border);
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(16, 24, 40, 0.05);
 }
@@ -317,7 +317,7 @@ a.about-pill:focus-visible {
 }
 
 .uploaded-card strong {
-    color: var(--ocha-ink);
+    color: var(--app-ink);
     font-size: 0.9rem;
     margin-bottom: 0.35rem;
 }
@@ -404,12 +404,12 @@ a.about-pill:focus-visible {
 }
 
 .process-step.done span {
-    background: var(--ocha-green);
+    background: var(--app-green);
     color: #ffffff;
 }
 
 .process-step.active span {
-    background: var(--ocha-blue);
+    background: var(--app-blue);
     box-shadow: 0 0 0 5px rgba(11, 93, 187, 0.12);
     color: #ffffff;
 }
@@ -449,7 +449,7 @@ a.about-pill:focus-visible {
 }
 
 .summary-card small {
-    color: var(--ocha-muted);
+    color: var(--app-muted);
     font-size: 0.75rem;
     font-weight: 650;
 }
@@ -468,27 +468,27 @@ a.about-pill:focus-visible {
 
 .summary-card.blue em {
     background: #eaf2ff;
-    color: var(--ocha-blue);
+    color: var(--app-blue);
 }
 
 .summary-card.green em {
     background: #e9f8ef;
-    color: var(--ocha-green);
+    color: var(--app-green);
 }
 
 .summary-card.orange em {
     background: #fff4dc;
-    color: var(--ocha-orange);
+    color: var(--app-orange);
 }
 
 .summary-card.purple em {
     background: #f1ebff;
-    color: var(--ocha-purple);
+    color: var(--app-purple);
 }
 
 .summary-card.red em {
     background: #fff0f0;
-    color: var(--ocha-red);
+    color: var(--app-red);
 }
 
 .summary-card.slate em {
@@ -578,15 +578,15 @@ a.about-pill:focus-visible {
 }
 
 .dot.green {
-    background: var(--ocha-green);
+    background: var(--app-green);
 }
 
 .dot.orange {
-    background: var(--ocha-orange);
+    background: var(--app-orange);
 }
 
 .dot.red {
-    background: var(--ocha-red);
+    background: var(--app-red);
 }
 
 .dot.gray {
@@ -630,15 +630,15 @@ a.about-pill:focus-visible {
 }
 
 .ai-status-item.ready {
-    border-left-color: var(--ocha-green);
+    border-left-color: var(--app-green);
 }
 
 .ai-status-item.optional {
-    border-left-color: var(--ocha-orange);
+    border-left-color: var(--app-orange);
 }
 
 .ai-status-item.blocked {
-    border-left-color: var(--ocha-red);
+    border-left-color: var(--app-red);
 }
 
 .ai-status-item strong,
@@ -647,12 +647,12 @@ a.about-pill:focus-visible {
 }
 
 .ai-status-item strong {
-    color: var(--ocha-ink);
+    color: var(--app-ink);
     font-size: 0.8rem;
 }
 
 .ai-status-item span {
-    color: var(--ocha-muted);
+    color: var(--app-muted);
     font-size: 0.72rem;
     line-height: 1.25;
     margin-top: 0.2rem;
@@ -751,7 +751,7 @@ a.about-pill:focus-visible {
     align-items: center;
     background: #eaf2ff;
     border-radius: 8px;
-    color: var(--ocha-blue);
+    color: var(--app-blue);
     display: flex;
     font-weight: 900;
     height: 38px;
@@ -761,12 +761,12 @@ a.about-pill:focus-visible {
 
 .output-card.ready .output-icon {
     background: #e9f8ef;
-    color: var(--ocha-green);
+    color: var(--app-green);
 }
 
 .output-card.blocked .output-icon {
     background: #fff4dc;
-    color: var(--ocha-orange);
+    color: var(--app-orange);
 }
 
 .output-card strong,
@@ -775,19 +775,19 @@ a.about-pill:focus-visible {
 }
 
 .output-card strong {
-    color: var(--ocha-ink);
+    color: var(--app-ink);
     font-size: 0.82rem;
 }
 
 .output-card span {
-    color: var(--ocha-muted);
+    color: var(--app-muted);
     font-size: 0.74rem;
 }
 
 .output-card em {
     border: 1px solid #b8cff3;
     border-radius: 6px;
-    color: var(--ocha-blue);
+    color: var(--app-blue);
     font-size: 0.72rem;
     font-style: normal;
     font-weight: 800;
@@ -827,8 +827,8 @@ a.about-pill:focus-visible {
 
 .stButton > button[kind="primary"],
 .stDownloadButton > button[kind="primary"] {
-    background: var(--ocha-blue);
-    border-color: var(--ocha-blue);
+    background: var(--app-blue);
+    border-color: var(--app-blue);
 }
 
 [data-testid="stSidebar"] .stButton > button {
@@ -859,8 +859,8 @@ iframe {
 }
 
 @media (max-width: 900px) {
-    .ocha-shell-header,
-    .ocha-header-actions {
+    .app-shell-header,
+    .app-header-actions {
         align-items: flex-start;
         flex-direction: column;
     }

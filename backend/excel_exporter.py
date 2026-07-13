@@ -67,7 +67,7 @@ def _hex_color(color: str) -> str:
 
 
 def _xlsxwriter_formats(writer: pd.ExcelWriter) -> dict[str, object]:
-    cache = getattr(writer, "_ocha_formats", None)
+    cache = getattr(writer, "_workbook_formats", None)
     if cache is None:
         workbook = writer.book
         cache = {
@@ -82,7 +82,7 @@ def _xlsxwriter_formats(writer: pd.ExcelWriter) -> dict[str, object]:
             ),
             "summary_light": workbook.add_format({"bg_color": _hex_color(LIGHT_FILL)}),
         }
-        setattr(writer, "_ocha_formats", cache)
+        setattr(writer, "_workbook_formats", cache)
     return cache
 
 
@@ -235,7 +235,7 @@ def export_cleaned_excel(
     matches_df: pd.DataFrame | None = None,
     validation_report: dict[str, object] | None = None,
 ) -> Path:
-    path = output_path("ocha_cleaned_response.xlsx")
+    path = output_path("settlement_cleaned_response.xlsx")
     metric_df, issues_df = _validation_frames(validation_report)
     with _excel_writer(path) as writer:
         _write_dataframe(writer, processed_df, "Cleaned Response")
@@ -251,7 +251,7 @@ def export_cleaned_excel(
 
 
 def export_district_workbook(processed_df: pd.DataFrame) -> Path:
-    path = output_path("ocha_district_response_workbook.xlsx")
+    path = output_path("settlement_district_response_workbook.xlsx")
     summary_tables = build_summary_tables(processed_df)
     _, groups = district_groups(processed_df)
     used_sheet_names: set[str] = set()
@@ -276,7 +276,7 @@ def export_district_workbook(processed_df: pd.DataFrame) -> Path:
 
 
 def export_district_summary(processed_df: pd.DataFrame) -> Path:
-    path = output_path("ocha_district_summary.xlsx")
+    path = output_path("settlement_district_summary.xlsx")
     summary_tables = build_summary_tables(processed_df)
     with _excel_writer(path) as writer:
         _write_dataframe(writer, summary_tables["district_summary"], "District Summary")

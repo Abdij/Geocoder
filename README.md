@@ -29,7 +29,7 @@ Most of the matching in this tool is **deterministic and rule-based** (exact loo
 ## Install
 
 ```powershell
-cd OCHA_Settlement_Response_Processor
+cd settlement-matching-geocoding-tool
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -39,8 +39,8 @@ pip install -r requirements.txt
 GeoPandas, Fiona, and Pyogrio depend on native geospatial wheels. If installation is difficult on a locked-down workstation, install from conda-forge:
 
 ```powershell
-conda create -n ocha_processor python=3.11 streamlit pandas numpy openpyxl geopandas shapely pyogrio fiona rapidfuzz folium reportlab requests geopy -c conda-forge
-conda activate ocha_processor
+conda create -n settlement_matcher python=3.11 streamlit pandas numpy openpyxl geopandas shapely pyogrio fiona rapidfuzz folium reportlab requests geopy -c conda-forge
+conda activate settlement_matcher
 pip install streamlit-folium sentence-transformers pytest
 ```
 

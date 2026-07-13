@@ -22,7 +22,7 @@ def export_qa_excel_report(
     matches_df: pd.DataFrame | None,
     validation_report: dict[str, object] | None,
 ) -> Path:
-    path = output_path("ocha_qa_report.xlsx")
+    path = output_path("settlement_qa_report.xlsx")
     metrics = validation_report.get("metrics", {}) if validation_report else {}
     issues = validation_report.get("issues", []) if validation_report else []
     summary_tables = build_summary_tables(processed_df)
@@ -58,7 +58,7 @@ def export_qa_pdf_report(
     validation_report: dict[str, object] | None,
     processing_seconds: float | None = None,
 ) -> Path:
-    path = output_path("ocha_qa_report.pdf")
+    path = output_path("settlement_qa_report.pdf")
     metrics = validation_report.get("metrics", {}) if validation_report else {}
     issues = validation_report.get("issues", []) if validation_report else []
 

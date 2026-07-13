@@ -32,7 +32,7 @@ def _ensure_processed_df() -> pd.DataFrame | None:
 
 
 def _write_log(outputs: dict[str, str], elapsed: float) -> str:
-    path = output_path("ocha_processing_log.txt")
+    path = output_path("settlement_processing_log.txt")
     validation = st.session_state.get("validation_report", {})
     metrics = validation.get("metrics", {}) if validation else {}
     lines = [

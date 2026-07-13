@@ -205,7 +205,7 @@ Use the **Outputs to generate** multiselect to choose which files you need (all 
 | **Audit Log (CSV)** | CSV | Every score component, the automatic decision, and any human review decision, reviewer, and note — one row per matched record. |
 | **Audit Log (Excel)** | Excel | Same audit trail as the CSV, in workbook form. |
 
-A processing log (`ocha_processing_log.txt`) and a combined **Download All Outputs** ZIP are generated automatically alongside your selected files. Individual files remain available for one-off download under **Individual files**. Each output card shows **Ready** once generated, or an error message if a stage failed (for example, if GeoPandas isn't installed for the GIS exports).
+A processing log (`settlement_processing_log.txt`) and a combined **Download All Outputs** ZIP are generated automatically alongside your selected files. Individual files remain available for one-off download under **Individual files**. Each output card shows **Ready** once generated, or an error message if a stage failed (for example, if GeoPandas isn't installed for the GIS exports).
 
 ![Outputs generated and ready to download, including the new audit log](images/05_outputs.png)
 

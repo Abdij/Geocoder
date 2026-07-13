@@ -50,7 +50,7 @@ def _patch_branca_links_for_offline_use() -> None:
     """
     import branca.element as branca_element
 
-    if getattr(branca_element.Link, "_ocha_offline_patched", False):
+    if getattr(branca_element.Link, "_offline_patched", False):
         return
 
     original_init = branca_element.Link.__init__
@@ -59,7 +59,7 @@ def _patch_branca_links_for_offline_use() -> None:
         original_init(self, _LEAFLET_VENDOR_URL_MAP.get(url, url), *args, **kwargs)
 
     branca_element.Link.__init__ = patched_init
-    branca_element.Link._ocha_offline_patched = True
+    branca_element.Link._offline_patched = True
 
 
 _patch_branca_links_for_offline_use()

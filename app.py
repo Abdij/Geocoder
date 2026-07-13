@@ -15,7 +15,7 @@ def _load_css() -> None:
 def main() -> None:
     st.set_page_config(
         page_title=APP_NAME,
-        page_icon="assets/ocha_mark.svg",
+        page_icon="\U0001F30D",
         layout="wide",
         initial_sidebar_state="expanded",
     )

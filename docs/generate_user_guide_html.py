@@ -574,7 +574,7 @@ def build() -> None:
 <div class="shell">
   <aside class="toc">
     <div class="toc-brand">
-      <div class="toc-brand-mark">OC</div>
+      <div class="toc-brand-mark">&#127757;</div>
       <strong>Settlement Matching &amp; Geocoding Tool</strong>
     </div>
     <div class="toc-label">Guide</div>

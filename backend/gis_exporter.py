@@ -60,24 +60,24 @@ def export_gis_outputs(
         raise ValueError("No records with valid coordinates are available for GIS export.")
 
     if "GeoPackage" in selected:
-        gpkg_path = output_path("ocha_settlement_response.gpkg")
+        gpkg_path = output_path("settlement_response.gpkg")
         gdf.to_file(gpkg_path, layer="settlement_response", driver="GPKG")
         results["GeoPackage"] = str(gpkg_path)
 
     if "GeoJSON" in selected:
-        geojson_path = output_path("ocha_settlement_response.geojson")
+        geojson_path = output_path("settlement_response.geojson")
         gdf.to_file(geojson_path, driver="GeoJSON")
         results["GeoJSON"] = str(geojson_path)
 
     if "Shapefile ZIP" in selected:
-        shapefile_dir = output_path("ocha_settlement_response_shapefile").with_suffix("")
+        shapefile_dir = output_path("settlement_response_shapefile").with_suffix("")
         if shapefile_dir.exists():
             shutil.rmtree(shapefile_dir)
         shapefile_dir.mkdir(parents=True, exist_ok=True)
         shapefile_gdf = _prepare_shapefile_columns(gdf.copy())
         shapefile_path = shapefile_dir / "settlement_response.shp"
         shapefile_gdf.to_file(shapefile_path, driver="ESRI Shapefile")
-        zip_path = output_path("ocha_settlement_response_shapefile.zip")
+        zip_path = output_path("settlement_response_shapefile.zip")
         _zip_directory(shapefile_dir, zip_path)
         results["Shapefile ZIP"] = str(zip_path)
 
